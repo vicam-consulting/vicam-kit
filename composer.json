@@ -1,0 +1,25 @@
+{
+    "name": "vicam/vicam-kit",
+    "description": "Reusable Laravel + Inertia + Vue starter kit with AI guidelines, components, and utilities",
+    "type": "library",
+    "license": "proprietary",
+    "require": {
+        "php": "^8.2",
+        "laravel/framework": "^11.0|^12.0",
+        "laravel/prompts": "^0.1|^0.2|^0.3"
+    },
+    "autoload": {
+        "psr-4": {
+            "Vicam\\VicamKit\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Vicam\\VicamKit\\VicamKitServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
