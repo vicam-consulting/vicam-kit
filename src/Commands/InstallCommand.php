@@ -40,6 +40,10 @@ class InstallCommand extends Command
         $this->newLine();
         info("Vicam Kit installed: {$this->copiedCount} files copied, {$this->skippedCount} skipped.");
 
+        $this->newLine();
+        info('Running boost:install to generate CLAUDE.md and MCP config...');
+        $this->call('boost:install');
+
         return self::SUCCESS;
     }
 
