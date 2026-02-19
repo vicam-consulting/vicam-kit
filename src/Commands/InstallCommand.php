@@ -104,7 +104,7 @@ class InstallCommand extends Command
     private function installComponents(string $stubsPath, bool $force): void
     {
         $installComponents = confirm(
-            label: 'Install starter components? (layouts, sidebar, form-field, utilities, etc.)',
+            label: 'Install additional components? (form-field, combobox, utilities, composables, etc.)',
             default: true,
         );
 
@@ -115,12 +115,11 @@ class InstallCommand extends Command
         $frontendPath = $stubsPath.'/frontend';
         $resourcesPath = base_path('resources/js');
 
+        // Copy components, composables, and lib utilities
         $mappings = [
             'components' => $resourcesPath.'/components',
             'composables' => $resourcesPath.'/composables',
-            'layouts' => $resourcesPath.'/layouts',
             'lib' => $resourcesPath.'/lib',
-            'types' => $resourcesPath.'/types',
         ];
 
         foreach ($mappings as $stubDir => $targetDir) {
