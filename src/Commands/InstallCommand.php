@@ -166,6 +166,39 @@ class InstallCommand extends Command
                 $this->copyFile($file->getPathname(), $destination, $force);
             }
         }
+
+        // Install npm dependencies required by the components
+        $this->installComponentDeps();
+    }
+
+    private function installComponentDeps(): void
+    {
+        $packageJsonPath = base_path('package.json');
+
+        if (! $this->files->exists($packageJsonPath)) {
+            return;
+        }
+
+        $packages = [
+            '@vortechron/query-builder-ts',
+            '@tanstack/vue-table',
+            '@vueuse/core',
+            'clsx',
+            'tailwind-merge',
+        ];
+
+        info('  Installing component dependencies...');
+
+        $process = new Process(array_merge(['npm', 'install', '--save'], $packages));
+        $process->setWorkingDirectory(base_path());
+        $process->setTimeout(120);
+        $process->run(function ($type, $buffer) {
+            $this->output->write($buffer);
+        });
+
+        if (! $process->isSuccessful()) {
+            warning('  Could not install component dependencies. You may need to run: npm install '.implode(' ', $packages));
+        }
     }
 
     private function installLintTools(string $stubsPath, bool $force): void
