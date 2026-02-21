@@ -183,9 +183,12 @@ class InstallCommand extends Command
             '@vortechron/query-builder-ts',
             '@tanstack/vue-table',
             '@vueuse/core',
+            'class-variance-authority',
             'clsx',
-            'tailwind-merge',
+            'lucide-vue-next',
+            'reka-ui',
             'signature_pad',
+            'tailwind-merge',
         ];
 
         info('  Installing component dependencies...');

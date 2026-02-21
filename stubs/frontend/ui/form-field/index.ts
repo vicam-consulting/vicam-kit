@@ -1,4 +1,3 @@
-export { default as AddressAutocompleteField } from './AddressAutocompleteField.vue';
 export { default as CheckboxField } from './CheckboxField.vue';
 export { default as ComboboxField } from './ComboboxField.vue';
 export type { ComboboxOption } from './ComboboxField.vue';
