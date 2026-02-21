@@ -1,0 +1,25 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+    - vendor/nesbot/carbon/extension.neon
+
+parameters:
+    level: max
+    tmpDir: /tmp/phpstan
+
+    paths:
+        - app
+        - bootstrap/app.php
+        - config
+        - database
+        - routes
+
+    excludePaths:
+        - database/migrations/*
+        - database/factories/*
+        - config/*.php
+        - bootstrap/cache/*
+        - storage/*
+
+    ignoreErrors:
+        # HasFactory trait generics - PHPDoc annotations don't fully satisfy PHPStan at level:max
+        - '#Class App\\Models\\.+ uses generic trait Illuminate\\Database\\Eloquent\\Factories\\HasFactory but does not specify its types#'
