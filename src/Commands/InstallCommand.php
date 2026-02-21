@@ -185,6 +185,7 @@ class InstallCommand extends Command
             '@vueuse/core',
             'clsx',
             'tailwind-merge',
+            'signature_pad',
         ];
 
         info('  Installing component dependencies...');
