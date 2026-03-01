@@ -359,20 +359,7 @@ class InstallCommand extends Command
         $this->newLine();
         info('Setting up laravel-data configuration...');
 
-        // Copy config files
-        $configsPath = $stubsPath.'/configs';
-        $this->copyFile($configsPath.'/data.php', base_path('config/data.php'), $force);
-        $this->copyFile($configsPath.'/typescript-transformer.php', base_path('config/typescript-transformer.php'), $force);
-
-        // Copy FlatExportWriter support class
-        $this->copyFile(
-            $stubsPath.'/support/Typescript/FlatExportWriter.php',
-            base_path('app/Support/Typescript/FlatExportWriter.php'),
-            $force
-        );
-
-        // Install composer dependencies
-        $packages = ['spatie/laravel-data', 'spatie/laravel-typescript-transformer'];
+        // Install composer dependencies first (before copying configs that reference their classes)
         $devPackages = ['spatie/laravel-typescript-transformer'];
         $prodPackages = ['spatie/laravel-data'];
 
@@ -401,6 +388,18 @@ class InstallCommand extends Command
         if (! $process->isSuccessful()) {
             warning('  Could not install spatie/laravel-typescript-transformer. You may need to run: composer require --dev '.implode(' ', $devPackages));
         }
+
+        // Copy config files after packages are installed (configs reference package classes)
+        $configsPath = $stubsPath.'/configs';
+        $this->copyFile($configsPath.'/data.php', base_path('config/data.php'), $force);
+        $this->copyFile($configsPath.'/typescript-transformer.php', base_path('config/typescript-transformer.php'), $force);
+
+        // Copy FlatExportWriter support class
+        $this->copyFile(
+            $stubsPath.'/support/Typescript/FlatExportWriter.php',
+            base_path('app/Support/Typescript/FlatExportWriter.php'),
+            $force
+        );
     }
 
     private function copyFile(string $source, string $destination, bool $force): void
