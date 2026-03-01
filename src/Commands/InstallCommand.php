@@ -374,6 +374,9 @@ class InstallCommand extends Command
 
         if (! $process->isSuccessful()) {
             warning('  Could not install spatie/laravel-data. You may need to run: composer require '.implode(' ', $prodPackages));
+            warning('  Skipping config file copy since package installation failed.');
+
+            return;
         }
 
         info('  Installing spatie/laravel-typescript-transformer...');
