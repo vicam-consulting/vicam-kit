@@ -378,7 +378,7 @@ class InstallCommand extends Command
 
         info('  Installing spatie/laravel-data...');
 
-        $process = new Process(array_merge(['composer', 'require', '--no-interaction'], $prodPackages));
+        $process = new Process(array_merge(['composer', 'require', '--no-interaction', '-W'], $prodPackages));
         $process->setWorkingDirectory(base_path());
         $process->setTimeout(120);
         $process->run(function ($type, $buffer) {
@@ -391,7 +391,7 @@ class InstallCommand extends Command
 
         info('  Installing spatie/laravel-typescript-transformer...');
 
-        $process = new Process(array_merge(['composer', 'require', '--dev', '--no-interaction'], $devPackages));
+        $process = new Process(array_merge(['composer', 'require', '--dev', '--no-interaction', '-W'], $devPackages));
         $process->setWorkingDirectory(base_path());
         $process->setTimeout(120);
         $process->run(function ($type, $buffer) {
