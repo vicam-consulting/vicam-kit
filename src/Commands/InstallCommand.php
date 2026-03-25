@@ -71,6 +71,7 @@ class InstallCommand extends Command
         $optionalGuidelines = [
             'multitenancy' => 'multitenancy-guidelines.blade.php',
             'laravel-data-api' => 'laravel-data-api.blade.php',
+            'server-side-rendering' => 'server-side-rendering.blade.php',
         ];
 
         $allGuidelines = array_merge($coreGuidelines, $optionalGuidelines);
@@ -85,6 +86,7 @@ class InstallCommand extends Command
                 'laravel-core-overrides' => 'Laravel Core Overrides',
                 'multitenancy' => 'Multitenancy (Spatie)',
                 'laravel-data-api' => 'Laravel Data - API (Scramble)',
+                'server-side-rendering' => 'Server-Side Rendering (Inertia SSR)',
             ],
             default: array_keys($coreGuidelines),
         );
