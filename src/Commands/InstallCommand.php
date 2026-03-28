@@ -70,6 +70,7 @@ class InstallCommand extends Command
 
         $optionalGuidelines = [
             'multitenancy' => 'multitenancy-guidelines.blade.php',
+            'multitenancy-path-based' => 'multitenancy-path-based.blade.php',
             'laravel-data-api' => 'laravel-data-api.blade.php',
             'server-side-rendering' => 'server-side-rendering.blade.php',
         ];
@@ -84,7 +85,8 @@ class InstallCommand extends Command
                 'laravel-data-inertia' => 'Laravel Data - Inertia',
                 'vue-guidelines' => 'Vue Guidelines',
                 'laravel-core-overrides' => 'Laravel Core Overrides',
-                'multitenancy' => 'Multitenancy (Spatie)',
+                'multitenancy' => 'Multitenancy (Spatie - Subdomain)',
+                'multitenancy-path-based' => 'Multitenancy (Spatie - Path-Based)',
                 'laravel-data-api' => 'Laravel Data - API (Scramble)',
                 'server-side-rendering' => 'Server-Side Rendering (Inertia SSR)',
             ],
