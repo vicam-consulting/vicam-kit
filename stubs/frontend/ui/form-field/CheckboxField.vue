@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { HTMLAttributes } from 'vue';
 import { Checkbox, CheckboxProps } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { type Props as FormFieldProps } from './FormField.vue';
@@ -9,7 +10,9 @@ import { type Props as FormFieldProps } from './FormField.vue';
  */
 defineOptions({ inheritAttrs: false });
 
-const props = defineProps<CheckboxProps & FormFieldProps>();
+const props = defineProps<
+    CheckboxProps & FormFieldProps & { class?: HTMLAttributes['class'] }
+>();
 
 const modelValue = defineModel<boolean | 'indeterminate' | null>();
 </script>

@@ -2,130 +2,51 @@
 
 ## Vue.js Best Practices
 
-This project uses Vue 3 with TypeScript, Inertia.js, and shadcn/ui components.
+Vue 3 + TypeScript + Inertia v3 + shadcn/ui.
 
 ## Component Syntax
 
-### Script Setup
-- **Always use `<script setup lang="ts">` syntax exclusively** - never use Options API or regular script tags
-- **Include proper TypeScript interfaces for props** - prefer generated interfaces from the `resources/js/types/generated.ts` file
- - **Prefer generated DTO types** from `resources/js/types/generated.ts` for Inertia props. Avoid hand-rolled types when a `...Response` DTO exists.
- - **Import types directly** using the short alias: `import type { EventTypeResponse } from '@/types/generated'` NOT `App.Data.Responses.EventTypeResponse`
- - **Naming:** Input DTOs are suffixed with `Request` and outputs with `Response` (e.g., use `UserResponse` for page props). Validate inputs server-side via laravel-data Request DTOs.
+- Always `<script setup lang="ts">`; never Options API.
+- Prefer generated DTO types from `resources/js/types/generated.ts` — avoid hand-rolled types when a `...Response` DTO exists.
+- Import as `import type { ItemResponse } from '@/types/generated'` — NOT `App.Data.Responses.ItemResponse`.
+- Naming: input DTOs end `Request`, outputs end `Response` (use `UserResponse` for page props).
 
-<code-snippet name="Component Structure Example" lang="vue">
-<script setup lang="ts">
-import { computed } from 'vue';
-import { Button } from '@/components/ui/button';
-import type { BreadcrumbItem } from '@/types';
+## Shadcn/UI
 
-interface Props {
-    breadcrumbs?: BreadcrumbItem[];
-    title: string;
-}
+- Add components with `npx shadcn-vue@latest add [name]` (Vue, not React).
+- Check `@/components/ui/` before building custom — shadcn first.
 
-const props = withDefaults(defineProps<Props>(), {
-    breadcrumbs: () => [],
-});
-</script>
+## Styling
 
-<template>
-    <!-- Component template -->
-</template>
-</code-snippet>
-
-## Shadcn/UI Components
-
-### Adding New Components
-- **Add new shadcn components**: `npx shadcn-vue@latest add [component-name]` (Vue version, not React)
-- **Use shadcn/ui components as building blocks** - always check available shadcn components before creating custom ones
-- Import shadcn components from `@/components/ui/` directory
-
-<code-snippet name="Shadcn Component Usage" lang="vue">
-<script setup lang="ts">
-import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-</script>
-</code-snippet>
-
-## Styling & Layout
-
-### Dark Mode Support
-- **Make sure to maintain support for dark mode** - use `dark:` prefixes for all styled elements
-- Follow existing styles/patterns in the codebase
-
-<code-snippet name="Dark Mode Example" lang="vue">
-<template>
-    <div class="rounded-xl border border-sidebar-border/70 dark:border-sidebar-border">
-        <h2 class="text-neutral-900 dark:text-neutral-100">
-            Title
-        </h2>
-    </div>
-</template>
-</code-snippet>
+- Maintain dark mode on every styled element via `dark:` prefixes.
+- Follow existing patterns in the codebase.
 
 ## Dates & Time
 
-- Use the datetime utilities in `resources/js/lib/datetime.ts` for consistency:
-  - Use `utcToLocal(isoUtc)` when displaying UTC timestamps to users.
-  - Use `nowLocal()` to prefill `datetime-local` inputs.
-  - Use `localToUtc(value)` to convert local input values to UTC before submitting forms.
+Use `resources/js/lib/datetime.utils.ts`:
+- `utcToLocal(isoUtc)` — display UTC timestamps.
+- `nowLocal()` — prefill `datetime-local` inputs.
+- `localToUtc(value)` — convert local input values to UTC before submit.
 
-## Inertia Integration
+## Page Titles
 
-### WhenVisible Component
+Use Inertia's `<Head>`.
 
-Use the `WhenVisible` component to lazy load content that appears below the fold:
+- **Why:** purpose-built for `<title>`/`<meta>`, SSR-safe (no duplicate title tags), and composes with the app-name suffix configured in `createInertiaApp`'s `title` callback (`resources/js/app.ts`).
+- Static: `<Head title="Dashboard" />`. Dynamic: `<Head :title="item?.name ?? 'Item'" />`.
+- Keep `<Head>` in the **page component**, never in a shared layout component.
 
-<code-snippet name="WhenVisible for lazy loading" lang="vue">
-<script setup lang="ts">
-import { WhenVisible } from '@inertiajs/vue3';
-</script>
+## Inertia v3 Integration
 
-<template>
-    <!-- Hero content loads immediately -->
-    <HeroSection :data="heroData" />
+- **`useHttp`** — form-style XHR that does **not** navigate (dialog fetches, receipt submissions). Returns `{ processing, wasSuccessful, errors, get/post/put }` without mutating page props. See Inertia v3 docs.
+- **`router.optimistic(fn).put(...)`** — apply expected page-prop shape immediately; Inertia reconciles on success and auto-rolls-back on error. Use for inline edits where the optimistic shape is obvious.
+- **Instant visits** — pass `<Link :href :component="pageName">` so the component mounts optimistically on click while the round-trip reconciles. Use on nav items and card lists that share the current layout.
+- **`<WhenVisible data="key" fallback="...">`** — lazy-load below-the-fold content; pair with deferred props on the backend.
+- **`router.reload({ only: ['categories'] })`** — force the server to re-resolve specific props (including `once` props).
 
-    <!-- Stats only load when scrolled into view -->
-    <WhenVisible data="statistics" fallback="Loading...">
-        <template #default="{ statistics }">
-            <StatsSection :stats="statistics" />
-        </template>
-    </WhenVisible>
-</template>
-</code-snippet>
+## Layouts
 
-Combine with deferred props on the backend for optimal performance.
-
-### Force Refresh Props
-
-To force the server to re-resolve a prop (including `once` props):
-
-<code-snippet name="Force refresh props" lang="ts">
-import { router } from '@inertiajs/vue3';
-
-// Reload specific props from the server
-router.reload({ only: ['eventTypes', 'venues'] });
-</code-snippet>
-
-### Layout Components
-- **Use appropriate layout components** - leverage existing layout components for page structure
-- Structure pages with proper layout hierarchy
-
-<code-snippet name="Layout Usage Example" lang="vue">
-<script setup lang="ts">
-import AppLayout from '@/layouts/AppLayout.vue';
-import type { BreadcrumbItem } from '@/types';
-
-const breadcrumbs: BreadcrumbItem[] = [
-    { title: 'Dashboard', href: '/dashboard' },
-];
-</script>
-
-<template>
-    <AppLayout :breadcrumbs="breadcrumbs">
-        <!-- Page content -->
-    </AppLayout>
-</template>
-</code-snippet>
+- Pages inside the authenticated shell import a layout component (e.g. `AppLayout`) and wrap their template: `<AppLayout :breadcrumbs="breadcrumbs">...</AppLayout>`. Pass layout state (breadcrumbs, etc.) as a direct prop.
+- Prefer declaring props like `breadcrumbs?: BreadcrumbItem[]` via `defineProps` on the layout component rather than relying on Inertia v3's `setLayoutProps()` / `useLayoutProps()` — direct props are simpler when every shell page already wraps its layout explicitly.
+- Opt-out page trees (auth, errors, public signing, marketing, etc.) own their own layout or none. Do not register a default layout in `createInertiaApp` — each page explicitly wraps what it needs.
+- Nested layouts (e.g. `SettingsLayout`) render inside `<AppLayout>` in the page template.

@@ -325,12 +325,14 @@ class InstallCommand extends Command
         $packages = [
             'eslint',
             '@eslint/js',
+            '@stylistic/eslint-plugin',
             '@vue/eslint-config-typescript',
             'eslint-config-prettier',
+            'eslint-import-resolver-typescript',
+            'eslint-plugin-import',
             'eslint-plugin-vue',
             'typescript-eslint',
             'prettier',
-            'prettier-plugin-organize-imports',
             'prettier-plugin-tailwindcss',
             'vue-tsc',
         ];

@@ -1,4 +1,8 @@
 <script setup lang="ts" generic="T">
+import type { VariantProps } from 'class-variance-authority';
+import { cva } from 'class-variance-authority';
+import { ref } from 'vue';
+
 import {
     AlertDialog,
     AlertDialogAction,
@@ -9,14 +13,13 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { cva, VariantProps } from 'class-variance-authority';
-import { ref } from 'vue';
 
 const variants = cva('', {
     variants: {
         variant: {
             default: '',
-            destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
+            destructive:
+                'bg-destructive text-destructive-foreground hover:bg-destructive/90',
         },
     },
 });
@@ -83,7 +86,10 @@ const handleUpdateOpen = (open: boolean) => {
                 <AlertDialogCancel @click="handleCancel">
                     {{ cancelText ?? 'Cancel' }}
                 </AlertDialogCancel>
-                <AlertDialogAction :class="variants({ variant })" @click="handleConfirm">
+                <AlertDialogAction
+                    :class="variants({ variant })"
+                    @click="handleConfirm"
+                >
                     {{ confirmText ?? 'Confirm' }}
                 </AlertDialogAction>
             </AlertDialogFooter>

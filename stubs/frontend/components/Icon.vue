@@ -18,10 +18,17 @@ const props = withDefaults(defineProps<Props>(), {
 
 const icon = computed(() => {
     const iconName = props.name.charAt(0).toUpperCase() + props.name.slice(1);
+
     return (icons as Record<string, any>)[iconName];
 });
 </script>
 
 <template>
-    <component :is="icon" :class="props.class" :size="size" :stroke-width="strokeWidth" :color="color" />
+    <component
+        :is="icon"
+        :class="props.class"
+        :size="size"
+        :stroke-width="strokeWidth"
+        :color="color"
+    />
 </template>

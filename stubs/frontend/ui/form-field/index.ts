@@ -7,5 +7,4 @@ export type { Props as FormFieldProps } from './FormField.vue';
 export { default as InputField } from './InputField.vue';
 export { default as SelectField } from './SelectField.vue';
 export { default as SwitchField } from './SwitchField.vue';
-export { default as TextareaField } from './TextareaField.vue';
 export { default as ToggleGroupField } from './ToggleGroupField.vue';

@@ -5,6 +5,10 @@ import { DateTime } from 'luxon';
  * Used as the default zone when interpreting local timestamps.
  */
 export function getBrowserZone(): string {
+    if (typeof window === 'undefined') {
+        return 'UTC';
+    }
+
     return Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
@@ -29,6 +33,7 @@ export function nowLocal(): string {
 export function localToUtc(value: string, zone?: string): string {
     const z = zone ?? getBrowserZone();
     const dt = DateTime.fromFormat(value, "yyyy-LL-dd'T'HH:mm", { zone: z });
+
     return dt.isValid ? (dt.toUTC().toISO() ?? '') : '';
 }
 
@@ -39,9 +44,18 @@ export function localToUtc(value: string, zone?: string): string {
  * Example:
  *   utcToLocal('2025-09-02T20:00:00.000Z') → 'Sep 2, 2025 1:00 PM' (America/Los_Angeles)
  */
-export function utcToLocal(isoUtc: string, format = 'MMM d, yyyy h:mm a'): string {
-    if (!isoUtc) return '';
-    const dt = DateTime.fromISO(isoUtc, { zone: 'utc' }).setZone(getBrowserZone());
+export function utcToLocal(
+    isoUtc: string,
+    format = 'MMM d, yyyy h:mm a',
+): string {
+    if (!isoUtc) {
+        return '';
+    }
+
+    const dt = DateTime.fromISO(isoUtc, { zone: 'utc' }).setZone(
+        getBrowserZone(),
+    );
+
     return dt.isValid ? dt.toFormat(format) : '';
 }
 
@@ -54,8 +68,12 @@ export function utcToLocal(isoUtc: string, format = 'MMM d, yyyy h:mm a'): strin
  *   formatDate('2024-12-15', 'MM/dd/yyyy') → '12/15/2024'
  */
 export function formatDate(dateString: string, format = 'MMM d, yyyy'): string {
-    if (!dateString) return '';
-    const dt = DateTime.fromISO(dateString);
+    if (!dateString) {
+        return '';
+    }
+
+    const dt = DateTime.fromISO(dateString, { zone: 'utc' });
+
     return dt.isValid ? dt.toFormat(format) : '';
 }
 
@@ -69,14 +87,22 @@ export function formatDate(dateString: string, format = 'MMM d, yyyy'): string {
  *   formatTime('13:30', 'h:mm:ss a') → '1:30:00 PM'
  */
 export function formatTime(timeString: string, format = 'h:mm a'): string {
-    if (!timeString) return '';
+    if (!timeString) {
+        return '';
+    }
+
     // Parse time string as today's date with that time
     const dt = DateTime.fromFormat(timeString, 'HH:mm');
+
     return dt.isValid ? dt.toFormat(format) : '';
 }
 
-export function getSlotDurationMinutes(startTime: string, endTime: string): number {
+export function getSlotDurationMinutes(
+    startTime: string,
+    endTime: string,
+): number {
     const start = DateTime.fromFormat(startTime, 'HH:mm');
     const end = DateTime.fromFormat(endTime, 'HH:mm');
+
     return end.diff(start).as('minutes');
 }

@@ -1,175 +1,74 @@
 # Multitenancy (Path-Based)
 
-This application uses **path-based tenancy** via `spatie/laravel-multitenancy`. Tenants are identified by URL path prefix (`/{tenant}/`), not subdomains.
+Uses `spatie/laravel-multitenancy` with **path-based** tenancy (URL prefix `/{tenant}/`, not subdomains). Single shared database; isolation via `tenant_id` foreign keys + query scoping.
 
 ## Core Concepts
 
-- **`Tenant::current()`** is the single source of truth for the active tenant context. Never use the user's stored tenant preference for tenant resolution — that is only for post-login redirect.
-- **Single database** — all tenants share one database. Isolation is achieved via `tenant_id` foreign keys and query scoping.
+- **`Tenant::current()`** is the single source of truth for active tenant context. NEVER use the user's stored tenant preference (e.g. `$user->last_tenant_id`) for tenant resolution.
+- The user's stored tenant preference is for **post-login redirect only** (sends user to `/{last-tenant-slug}/dashboard`).
 
-## Route Structure
+## Routes
 
-All tenant-scoped routes use a `{tenant}` prefix resolved by slug:
+- Public routes: no prefix.
+- `/dashboard`: named `dashboard.redirect`, resolves the user's default tenant and redirects to `/{slug}/dashboard`.
+- Tenant-scoped routes live under `Route::middleware(['auth','verified','tenant'])->prefix('{tenant}')->group(...)`.
 
-<code-snippet name="Route structure" lang="php">
-// routes/web.php
+## `tenant` Middleware (`SetTenantFromPath`)
 
-// Public routes — no tenant prefix
-Route::get('/', [MarketingController::class, 'homepage']);
-
-// Dashboard redirect — resolves user's default tenant
-Route::middleware(['auth', 'verified'])->get('dashboard', function () {
-    $tenant = request()->user()->getDefaultTenant();
-    return redirect()->route('dashboard', ['tenant' => $tenant->slug]);
-})->name('dashboard.redirect');
-
-// Tenant-scoped routes
-Route::middleware(['auth', 'verified', 'tenant'])->prefix('{tenant}')->group(function () {
-    Route::get('dashboard', DashboardController::class)->name('dashboard');
-    // ...
-});
-</code-snippet>
-
-The `tenant` middleware should:
-1. Resolve the `{tenant}` route parameter by slug
-2. Validate the authenticated user is a member (403 if not)
-3. Call `$tenant->makeCurrent()` to activate tenant context
-4. Update the user's last-used tenant if they switched
-5. Remove the `{tenant}` parameter via `forgetParameter('tenant')` so it doesn't inject into controller method signatures
-
-## Tenant Middleware
-
-<code-snippet name="Middleware behavior" lang="php">
-// Registered in bootstrap/app.php as:
-'tenant' => SetTenantFromPath::class
-
-// Applied to the {tenant} prefix group — automatically activates tenant context.
-// Controllers within this group use Tenant::current() instead of $user->lastTenant.
-</code-snippet>
-
-**Important:** `forgetParameter('tenant')` prevents Laravel's ControllerDispatcher from injecting the Tenant model as the first positional argument to controller methods.
+Registered in `bootstrap/app.php` as `'tenant' => SetTenantFromPath::class`. On each request it:
+1. Resolves `{tenant}` by slug
+2. Validates the authenticated user is a tenant member (403 if not)
+3. Calls `$tenant->makeCurrent()`
+4. Updates the user's stored tenant preference if they switched tenants
+5. Calls `forgetParameter('tenant')` so the Tenant model is **not** injected as the first controller arg
 
 ## `BelongsToTenant` Trait
 
-Apply `use BelongsToTenant` to any Eloquent model that is tenant-scoped. The trait provides:
+Location: `App\Models\Concerns\BelongsToTenant`. Apply to any model with a `tenant_id` column that should be isolated per tenant. Provides:
+- Global scope filtering by `Tenant::current()` (no-op when no tenant active)
+- Auto-assigns `tenant_id` on create
+- `scopeWithoutTenantScope()` — cross-tenant queries
+- `scopeForTenant(Tenant $tenant)` — query a specific tenant
+- `tenant()` BelongsTo relationship
 
-- **Global scope** — automatically filters queries by `Tenant::current()` (no-op when no tenant is active)
-- **Auto-assign `tenant_id`** — on model creation, sets `tenant_id` from `Tenant::current()` if present
-- **`scopeWithoutTenantScope()`** — removes the global scope for cross-tenant queries
-- **`scopeForTenant(Tenant $tenant)`** — queries for a specific tenant regardless of current context
-- **`tenant()` relationship** — `BelongsTo` relationship back to the Tenant model
+Do **not** apply to models reached through already-scoped parents (e.g. line items go through an already-scoped order).
 
-<code-snippet name="Applying BelongsToTenant" lang="php">
-use App\Models\Concerns\BelongsToTenant;
+## Controllers, Policies, Actions
 
-class Invoice extends Model
-{
-    use BelongsToTenant;
-    // Model now automatically scoped to Tenant::current()
-}
-</code-snippet>
-
-### When to Apply
-
-Apply `BelongsToTenant` to models that have a `tenant_id` column and should be isolated per tenant.
-
-Do **not** apply to models accessed via relationships through already-scoped parents (e.g., `InvoiceLineItem` is accessed through `Invoice`, which is already scoped).
-
-## Controllers
-
-Controllers within the `{tenant}` route group use `Tenant::current()` for all tenant-related logic:
-
-<code-snippet name="Controller pattern" lang="php">
-// CORRECT — use Tenant::current()
-$invoices = Invoice::query()
-    ->where('tenant_id', Tenant::current()->id)
-    ->paginate(20);
-
-// WRONG — do not use auth user for tenant resolution
-$invoices = Invoice::query()
-    ->where('tenant_id', $request->user()->last_tenant_id)
-    ->paginate(20);
-</code-snippet>
-
-Note: With `BelongsToTenant`, the global scope handles filtering automatically — explicit `where('tenant_id', ...)` is only needed in special cases.
-
-## Policies
-
-Policies use `Tenant::current()?->id` (null-safe) for ownership checks:
-
-<code-snippet name="Policy pattern" lang="php">
-public function view(User $user, Invoice $invoice): bool
-{
-    return $invoice->tenant_id === Tenant::current()?->id;
-}
-</code-snippet>
-
-This decouples authorization from the authenticated user's stored tenant preference.
-
-## Actions
-
-Actions that create tenant-scoped models use `Tenant::current()->id`. For actions that may run without tenant context (e.g., public-facing flows), use a fallback:
-
-<code-snippet name="Action pattern with fallback" lang="php">
-// For authenticated, tenant-scoped flows
-$invoice->tenant_id = Tenant::current()->id;
-
-// For flows that may lack tenant context (public forms, webhooks)
-$invoice->tenant_id = Tenant::current()?->id ?? $parentModel->tenant_id;
-</code-snippet>
+- **Controllers** inside the `{tenant}` group: use `Tenant::current()` for tenant logic. With `BelongsToTenant`, explicit `where('tenant_id', ...)` is only needed for special cases.
+- **Policies:** use null-safe `Tenant::current()?->id` for ownership checks — decouples authz from the user's stored tenant preference.
+- **Actions:** tenant-scoped creates use `Tenant::current()->id`. For flows that may lack tenant context (public endpoints, webhooks), fall back: `Tenant::current()?->id ?? $parent->tenant_id`.
 
 ## Queued Jobs
 
-All queued jobs are tenant-aware by default (`queues_are_tenant_aware_by_default: true` in `config/multitenancy.php`). When a job is dispatched within a tenant context, Spatie automatically:
+Tenant-aware by default (`queues_are_tenant_aware_by_default: true` in `config/multitenancy.php`). Spatie captures `Tenant::current()->id` at dispatch and restores it before `handle()`. No special trait or interface needed — `ShouldQueue` + `Queueable` is sufficient.
 
-1. Captures `Tenant::current()->id` at dispatch time
-2. Restores `Tenant::current()` before the job's `handle()` method runs
-
-No special traits or interfaces needed on job classes — `ShouldQueue` + `Queueable` is sufficient.
-
-**Critical:** Jobs dispatched from public routes (webhooks, public forms) require manual tenant context setup because these routes have no `{tenant}` prefix and no `tenant` middleware. Set tenant context in the action before dispatching events/jobs:
-
-<code-snippet name="Public route tenant setup" lang="php">
-// In an action handling a public/webhook flow:
-$parentModel->tenant->makeCurrent();
-// Now any dispatched jobs will capture this tenant context
-</code-snippet>
+**Critical gotcha — public routes:** jobs dispatched from public (non-tenant-prefixed) routes have no `tenant` middleware. Call `$model->tenant->makeCurrent()` inside the action **before** dispatching events/jobs.
 
 ## Cache Isolation
 
-`PrefixCacheTask` (configured in `switch_tenant_tasks`) automatically prefixes cache keys with `tenant_id_{id}` when a tenant is active. This ensures cached data is isolated between tenants without any manual key prefixing.
+`PrefixCacheTask` (in `switch_tenant_tasks`) auto-prefixes cache keys with `tenant_id_{id}` when a tenant is active. No manual prefixing needed.
 
 ## Frontend
 
-The frontend gets the current tenant slug from Inertia shared props:
+Get current tenant slug from Inertia shared props (e.g. `page.props.auth?.currentTenant?.slug`). Pass to Wayfinder route helpers. Tenant switching: `router.visit('/{slug}/dashboard')` — no POST endpoint.
 
-<code-snippet name="Frontend tenant slug" lang="ts">
-const page = usePage();
-const tenantSlug = computed(() => page.props.auth?.tenant?.slug ?? '');
+## Auth Redirects
 
-// Use in route generation
-route('items.index', { tenant: tenantSlug.value })
-</code-snippet>
-
-Tenant switching uses `router.visit('/{slug}/dashboard')` — no POST endpoint needed.
-
-## Auth Flow Redirects
-
-Login, registration, and invitation acceptance redirect to a dashboard redirect route, which resolves the user's default tenant and redirects to `/{tenant-slug}/dashboard`.
+Login, registration, and invitation acceptance redirect to `route('dashboard.redirect')` (the `/dashboard` endpoint), which resolves the user's default tenant and redirects to `/{slug}/dashboard`.
 
 ## Testing
 
-- **`tenantUrl(Tenant $tenant, string $path)`** helper generates `/{tenant->slug}{$path}` — use for all tenant-scoped test URLs
-- **`$tenant->makeCurrent()`** must be called before any operation that reads `Tenant::current()` — including job dispatch, policy checks, and model creation via `BelongsToTenant`
-- **`Tenant::forgetCurrent()`** must be called in `afterEach` to prevent tenant state leaking between tests
-- **Cross-tenant access** returns 403 (policy denies), not 404 (scope hides), because route model binding resolves by ID regardless of tenant scope
-- **`BelongsToTenant` creating hook** auto-assigns `tenant_id` — set `makeCurrent()` AFTER creating test fixtures to avoid overwriting explicit `tenant_id` values
+- Add a `tenantUrl(Tenant $tenant, string $path)` helper in `tests/Pest.php` for tenant-scoped test URLs.
+- Call `$tenant->makeCurrent()` before any operation that reads `Tenant::current()` — job dispatch, policy checks, model creation via `BelongsToTenant`.
+- Call `Tenant::forgetCurrent()` in `afterEach` to prevent tenant state leaking between tests.
+- Cross-tenant access returns **403** (policy denies), not 404 (scope hides), because route model binding resolves by ID regardless of scope.
+- `BelongsToTenant` creating hook auto-assigns `tenant_id` — if you set an explicit `tenant_id` on a factory, call `makeCurrent()` AFTER creating fixtures so it isn't overwritten.
 
-<code-snippet name="Test setup" lang="php">
+<code-snippet name="Job test tenant setup" lang="php">
 beforeEach(function () {
     $this->user = User::factory()->create();
-    $this->tenant = $this->user->defaultTenant;
-    $this->tenant->makeCurrent();
+    $this->user->defaultTenant->makeCurrent();
 });
 
 afterEach(function () {

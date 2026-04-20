@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { cn } from '@/lib/style.utils';
-import SignaturePadLib, { type PointGroup } from 'signature_pad';
+import type { PointGroup } from 'signature_pad';
 import { onBeforeUnmount, onMounted, ref, watch, type HTMLAttributes } from 'vue';
 
 export interface SignaturePadProps {
@@ -14,26 +14,30 @@ export interface SignaturePadProps {
 
 const props = withDefaults(defineProps<SignaturePadProps>(), {
     penColor: '#000000',
-    backgroundColor: 'rgb(255, 255, 255)',
+    backgroundColor: 'rgba(0,0,0,0)',
     minWidth: 0.5,
     maxWidth: 2.5,
     disabled: false,
 });
 
 const emit = defineEmits<{
-    update: [data: { dataUrl: string; points: PointGroup[] } | null];
+    update: [data: { dataUrl: string; points: PointGroup[] | null } | null];
 }>();
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 const wrapperRef = ref<HTMLDivElement | null>(null);
-const signaturePad = ref<SignaturePadLib | null>(null);
+const signaturePad = ref<InstanceType<typeof import('signature_pad').default> | null>(null);
 const isEmpty = ref(true);
+const currentData = ref<{ dataUrl: string; points: PointGroup[] | null } | null>(
+    null,
+);
 
-const initSignaturePad = () => {
+const initSignaturePad = async () => {
     if (!canvasRef.value) {
         return;
     }
 
+    const { default: SignaturePadLib } = await import('signature_pad');
     signaturePad.value = new SignaturePadLib(canvasRef.value, {
         penColor: props.penColor,
         backgroundColor: props.backgroundColor,
@@ -54,7 +58,29 @@ const initSignaturePad = () => {
     resizeCanvas();
 };
 
-const resizeCanvas = () => {
+const renderCurrentData = async () => {
+    if (!signaturePad.value) {
+        return;
+    }
+
+    const data = currentData.value;
+
+    if (!data) {
+        signaturePad.value.clear();
+        isEmpty.value = true;
+
+        return;
+    }
+
+    signaturePad.value.clear();
+
+    if (data.points && data.points.length > 0) {
+        signaturePad.value.fromData(data.points);
+        isEmpty.value = false;
+    }
+};
+
+const resizeCanvas = async () => {
     if (!canvasRef.value || !wrapperRef.value || !signaturePad.value) {
         return;
     }
@@ -67,24 +93,33 @@ const resizeCanvas = () => {
     canvas.height = wrapper.offsetHeight * ratio;
     canvas.getContext('2d')?.scale(ratio, ratio);
 
-    signaturePad.value.clear();
-    isEmpty.value = true;
+    await renderCurrentData();
 };
 
 const clear = () => {
     signaturePad.value?.clear();
     isEmpty.value = true;
+    currentData.value = null;
     emit('update', null);
+};
+
+const setData = async (data: { dataUrl: string; points: PointGroup[] | null } | null) => {
+    currentData.value = data;
+    await renderCurrentData();
 };
 
 const emitUpdate = () => {
     if (signaturePad.value?.isEmpty()) {
+        currentData.value = null;
         emit('update', null);
+
         return;
     }
 
     const dataUrl = signaturePad.value?.toDataURL('image/png') ?? '';
-    const points = signaturePad.value?.toData() ?? [];
+    const points = signaturePad.value?.toData() ?? null;
+
+    currentData.value = { dataUrl, points };
 
     emit('update', { dataUrl, points });
 };
@@ -102,8 +137,8 @@ watch(
     },
 );
 
-onMounted(() => {
-    initSignaturePad();
+onMounted(async () => {
+    await initSignaturePad();
     window.addEventListener('resize', resizeCanvas);
 });
 
@@ -122,7 +157,7 @@ const getData = (): { dataUrl: string; points: PointGroup[] } | null => {
     };
 };
 
-defineExpose({ clear, isEmpty, getData });
+defineExpose({ clear, getData, isEmpty, setData });
 </script>
 
 <template>
@@ -131,7 +166,7 @@ defineExpose({ clear, isEmpty, getData });
             ref="wrapperRef"
             :class="
                 cn(
-                    'relative h-40 w-full overflow-hidden rounded-lg border border-input bg-background transition-colors',
+                    'relative h-40 w-full overflow-hidden rounded-lg border border-input bg-white transition-colors',
                     disabled && 'cursor-not-allowed opacity-50',
                     props.class,
                 )

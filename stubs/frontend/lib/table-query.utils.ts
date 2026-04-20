@@ -1,7 +1,10 @@
-import { SortingState } from '@tanstack/vue-table';
+import type { SortingState } from '@tanstack/vue-table';
 import { query } from '@vortechron/query-builder-ts';
 
-export type TableFilters = Record<string, string | number | boolean | null | undefined>;
+export type TableFilters = Record<
+    string,
+    string | number | boolean | null | undefined
+>;
 
 export type TableQueryOptions = {
     baseUrl: string;
@@ -11,9 +14,12 @@ export type TableQueryOptions = {
     filters?: TableFilters;
 };
 
-const buildSortParams = (sorting: SortingState = []): string[] => sorting.map((sort) => `${sort.desc ? '-' : ''}${sort.id}`);
+const buildSortParams = (sorting: SortingState = []): string[] =>
+    sorting.map((sort) => `${sort.desc ? '-' : ''}${sort.id}`);
 
-export const parseSortParams = (sortValues: string | string[] = []): SortingState =>
+export const parseSortParams = (
+    sortValues: string | string[] = [],
+): SortingState =>
     (Array.isArray(sortValues) ? sortValues : [sortValues])
         .flatMap((value) => value.split(','))
         .filter((param) => param.length > 0)
@@ -22,7 +28,13 @@ export const parseSortParams = (sortValues: string | string[] = []): SortingStat
             desc: param.startsWith('-'),
         }));
 
-export const buildTableQuery = ({ baseUrl, search, sorting = [], perPage, filters = {} }: TableQueryOptions) => {
+export const buildTableQuery = ({
+    baseUrl,
+    search,
+    sorting = [],
+    perPage,
+    filters = {},
+}: TableQueryOptions) => {
     const sortParams = buildSortParams(sorting);
 
     return query(baseUrl)
@@ -31,8 +43,12 @@ export const buildTableQuery = ({ baseUrl, search, sorting = [], perPage, filter
                 builder.sort(...sortParams);
             }
         })
-        .when(Boolean(search), (builder) => builder.filter('search', String(search)))
-        .when(typeof perPage === 'number', (builder) => builder.param('perPage', String(perPage)))
+        .when(Boolean(search), (builder) =>
+            builder.filter('search', String(search)),
+        )
+        .when(typeof perPage === 'number', (builder) =>
+            builder.param('perPage', String(perPage)),
+        )
         .tap((builder) => {
             // Add custom filters
             Object.entries(filters).forEach(([key, value]) => {

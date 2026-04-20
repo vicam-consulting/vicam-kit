@@ -34,13 +34,9 @@ const emitDebouncedValue = useDebounceFn((value: string) => {
     emit('update:modelValue', value);
 }, 300);
 
-watch(
-    inputValue,
-    (nextValue) => {
-        emitDebouncedValue(nextValue);
-    },
-    { immediate: true },
-);
+watch(inputValue, (nextValue) => {
+    emitDebouncedValue(nextValue);
+});
 </script>
 
 <template>

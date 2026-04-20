@@ -1,9 +1,14 @@
-import { buildTableQuery, parseSortParams } from '@/lib/table-query.utils';
 import { router } from '@inertiajs/vue3';
-import { SortingState } from '@tanstack/vue-table';
-import { computed, ref, watch, type WatchSource } from 'vue';
+import type { SortingState } from '@tanstack/vue-table';
+import { computed, ref, watch } from 'vue';
+import type { WatchSource } from 'vue';
 
-export type TableFilters = Record<string, string | number | boolean | null | undefined>;
+import { buildTableQuery, parseSortParams } from '@/lib/table-query.utils';
+
+export type TableFilters = Record<
+    string,
+    string | number | boolean | null | undefined
+>;
 
 export type UseServerTableOptions = {
     /**
@@ -80,7 +85,10 @@ export function useServerTable({
             baseUrl,
             search: features.search ? globalFilter.value : undefined,
             sorting: sorting.value,
-            perPage: features.pagination && perPage.value !== defaultPerPage ? perPage.value : undefined,
+            perPage:
+                features.pagination && perPage.value !== defaultPerPage
+                    ? perPage.value
+                    : undefined,
             filters: {
                 ...customFilters,
                 ...additionalParams,
@@ -91,6 +99,7 @@ export function useServerTable({
             ...(inertiaKey && { only: [inertiaKey] }),
             preserveState: true,
             preserveScroll: true,
+            preserveErrors: true,
         });
     };
 
@@ -107,6 +116,7 @@ export function useServerTable({
             ...(inertiaKey && { only: [inertiaKey] }),
             preserveState: true,
             preserveScroll: true,
+            preserveErrors: true,
         });
     };
 
@@ -115,7 +125,9 @@ export function useServerTable({
      */
     const hasActiveFilters = computed(() => {
         return (
-            sorting.value.length > 0 || (features.search && globalFilter.value !== '') || (features.pagination && perPage.value !== defaultPerPage)
+            sorting.value.length > 0 ||
+            (features.search && globalFilter.value !== '') ||
+            (features.pagination && perPage.value !== defaultPerPage)
         );
     });
 
@@ -123,13 +135,22 @@ export function useServerTable({
      * Watch for changes and automatically navigate
      */
     const watchTargets: WatchSource[] = [sorting];
-    if (features.search) watchTargets.push(globalFilter);
-    if (features.pagination) watchTargets.push(perPage);
+
+    if (features.search) {
+        watchTargets.push(globalFilter);
+    }
+
+    if (features.pagination) {
+        watchTargets.push(perPage);
+    }
 
     watch(
         watchTargets,
         () => {
-            if (isSyncing) return;
+            if (isSyncing) {
+                return;
+            }
+
             navigateToTable();
         },
         { deep: true },

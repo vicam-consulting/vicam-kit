@@ -3,7 +3,7 @@ includes:
     - vendor/nesbot/carbon/extension.neon
 
 parameters:
-    level: max
+    level: 10
     tmpDir: /tmp/phpstan
 
     paths:
@@ -19,7 +19,3 @@ parameters:
         - config/*.php
         - bootstrap/cache/*
         - storage/*
-
-    ignoreErrors:
-        # HasFactory trait generics - PHPDoc annotations don't fully satisfy PHPStan at level:max
-        - '#Class App\\Models\\.+ uses generic trait Illuminate\\Database\\Eloquent\\Factories\\HasFactory but does not specify its types#'
