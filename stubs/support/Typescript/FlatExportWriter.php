@@ -112,7 +112,14 @@ class FlatExportWriter implements Writer
             );
 
             if ($alias !== null) {
-                $output .= sprintf('export type %s = %s;', $alias, $declaration['fullName']).PHP_EOL;
+                $generics = $this->extractGenericParams($statement, $declaration['fullName']);
+                $output .= sprintf(
+                    'export type %s%s = %s%s;',
+                    $alias,
+                    $generics['decl'],
+                    $declaration['fullName'],
+                    $generics['args'],
+                ).PHP_EOL;
             }
 
             $output .= PHP_EOL;
@@ -146,6 +153,84 @@ class FlatExportWriter implements Writer
         }
 
         return $this->generateSmartAlias($shortName, $namespace, $allTypes[$shortName] ?? []);
+    }
+
+    /**
+     * Extract the generic parameter clause from a declaration so it can be forwarded to its short alias.
+     *
+     * For `export type Foo<TKey, TValue extends Bar = Baz> = ...`, returns:
+     *   - decl: `<TKey, TValue extends Bar = Baz>` (preserved verbatim for the alias declaration)
+     *   - args: `<TKey, TValue>` (constraints + defaults stripped, used for the alias RHS reference)
+     *
+     * @return array{decl: string, args: string}
+     */
+    protected function extractGenericParams(string $statement, string $fullName): array
+    {
+        $empty = ['decl' => '', 'args' => ''];
+
+        $pattern = '/^(?:export\s+)?(?:declare\s+)?(?:type|interface)\s+'.preg_quote($fullName, '/').'\s*(<[^=]*?>)\s*(?:=|\{|extends)/s';
+
+        if (preg_match($pattern, $statement, $matches) !== 1) {
+            return $empty;
+        }
+
+        $decl = trim($matches[1]);
+        $inner = substr($decl, 1, -1);
+
+        $names = array_map(
+            $this->stripGenericConstraint(...),
+            $this->splitGenericParams($inner),
+        );
+
+        return ['decl' => $decl, 'args' => '<'.implode(', ', $names).'>'];
+    }
+
+    protected function stripGenericConstraint(string $param): string
+    {
+        $trimmed = trim($param);
+
+        if (preg_match('/^(\S+)/', $trimmed, $matches) === 1) {
+            return $matches[1];
+        }
+
+        return $trimmed;
+    }
+
+    /**
+     * Split a generic parameter list by top-level commas, honoring nested `<>`, `()`, `{}`, and `[]`.
+     *
+     * @return array<int, string>
+     */
+    protected function splitGenericParams(string $inner): array
+    {
+        $parts = [];
+        $buffer = '';
+        $depth = 0;
+
+        for ($i = 0, $length = strlen($inner); $i < $length; $i++) {
+            $char = $inner[$i];
+
+            if (in_array($char, ['<', '(', '{', '['], true)) {
+                $depth++;
+            } elseif (in_array($char, ['>', ')', '}', ']'], true)) {
+                $depth--;
+            }
+
+            if ($char === ',' && $depth === 0) {
+                $parts[] = $buffer;
+                $buffer = '';
+
+                continue;
+            }
+
+            $buffer .= $char;
+        }
+
+        if ($buffer !== '') {
+            $parts[] = $buffer;
+        }
+
+        return $parts;
     }
 
     protected function replaceDeclaredName(string $statement, string $shortName, string $fullName): string

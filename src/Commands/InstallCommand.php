@@ -401,7 +401,6 @@ class InstallCommand extends Command
         // Copy config files after packages are installed (configs reference package classes)
         $configsPath = $stubsPath.'/configs';
         $this->copyFile($configsPath.'/data.php', base_path('config/data.php'), $force);
-        $this->copyFile($configsPath.'/typescript-transformer.php', base_path('config/typescript-transformer.php'), $force);
 
         // Copy FlatExportWriter support class
         $this->copyFile(
@@ -409,6 +408,66 @@ class InstallCommand extends Command
             base_path('app/Support/Typescript/FlatExportWriter.php'),
             $force
         );
+
+        // typescript-transformer v3 reads its config from a user-defined ServiceProvider
+        // extending TypeScriptTransformerApplicationServiceProvider — there is no config file.
+        // Copy our provider stub, register it, and scaffold the directories it scans.
+        $this->copyFile(
+            $stubsPath.'/providers/TypeScriptTransformerServiceProvider.stub',
+            base_path('app/Providers/TypeScriptTransformerServiceProvider.php'),
+            $force
+        );
+
+        $this->registerTypeScriptTransformerProvider();
+        $this->scaffoldDataAndEnumsDirectories();
+    }
+
+    private function registerTypeScriptTransformerProvider(): void
+    {
+        $providersPath = base_path('bootstrap/providers.php');
+
+        if (! $this->files->exists($providersPath)) {
+            warning('  bootstrap/providers.php not found — register App\Providers\TypeScriptTransformerServiceProvider manually.');
+
+            return;
+        }
+
+        $contents = $this->files->get($providersPath);
+
+        if (str_contains($contents, 'TypeScriptTransformerServiceProvider')) {
+            return;
+        }
+
+        $updated = preg_replace(
+            '/(return\s*\[\s*\n)((?:\s*[^\n]+\n)*?)(\s*\];)/',
+            "$1$2    App\\Providers\\TypeScriptTransformerServiceProvider::class,\n$3",
+            $contents,
+            1,
+        );
+
+        if ($updated === null || $updated === $contents) {
+            warning('  Could not auto-register TypeScriptTransformerServiceProvider in bootstrap/providers.php — add it manually.');
+
+            return;
+        }
+
+        $this->files->put($providersPath, $updated);
+        note('  Registered App\Providers\TypeScriptTransformerServiceProvider in bootstrap/providers.php');
+    }
+
+    private function scaffoldDataAndEnumsDirectories(): void
+    {
+        foreach ([app_path('Data'), app_path('Enums')] as $directory) {
+            $this->files->ensureDirectoryExists($directory);
+
+            $gitkeep = $directory.'/.gitkeep';
+
+            if (! $this->files->exists($gitkeep)) {
+                $this->files->put($gitkeep, '');
+                $relative = str_replace(base_path().'/', '', $gitkeep);
+                note("  Created: {$relative}");
+            }
+        }
     }
 
     private function copyFile(string $source, string $destination, bool $force): void
