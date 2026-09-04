@@ -16,7 +16,7 @@ class InstallCommand extends Command
 {
     protected $signature = 'vicam:install {--force : Overwrite existing files}';
 
-    protected $description = 'Install Vicam Kit guidelines, components, and utilities';
+    protected $description = 'Install Vicam Kit guidelines and tooling';
 
     private Filesystem $files;
 
@@ -36,7 +36,6 @@ class InstallCommand extends Command
         $stubsPath = $this->stubsPath();
 
         $selected = $this->installGuidelines($stubsPath, $force);
-        $this->installComponents($stubsPath, $force);
 
         // Install laravel-data configs if any laravel-data guidelines were selected
         $dataGuidelines = ['laravel-data-core', 'laravel-data-inertia', 'laravel-data-api'];
@@ -117,96 +116,6 @@ class InstallCommand extends Command
         }
 
         return $selected;
-    }
-
-    private function installComponents(string $stubsPath, bool $force): void
-    {
-        $installComponents = confirm(
-            label: 'Install additional components? (form-field, combobox, utilities, composables, etc.)',
-            default: true,
-        );
-
-        if (! $installComponents) {
-            return;
-        }
-
-        $frontendPath = $stubsPath.'/frontend';
-        $resourcesPath = base_path('resources/js');
-
-        // Copy components, composables, and lib utilities
-        $mappings = [
-            'components' => $resourcesPath.'/components',
-            'composables' => $resourcesPath.'/composables',
-            'lib' => $resourcesPath.'/lib',
-        ];
-
-        foreach ($mappings as $stubDir => $targetDir) {
-            $sourceDir = $frontendPath.'/'.$stubDir;
-
-            if (! $this->files->isDirectory($sourceDir)) {
-                continue;
-            }
-
-            $files = $this->files->allFiles($sourceDir);
-
-            foreach ($files as $file) {
-                $relativePath = $file->getRelativePathname();
-                $destination = $targetDir.'/'.$relativePath;
-
-                $this->copyFile($file->getPathname(), $destination, $force);
-            }
-        }
-
-        // Copy custom UI components
-        $uiSourceDir = $frontendPath.'/ui';
-
-        if ($this->files->isDirectory($uiSourceDir)) {
-            $uiFiles = $this->files->allFiles($uiSourceDir);
-
-            foreach ($uiFiles as $file) {
-                $relativePath = $file->getRelativePathname();
-                $destination = $resourcesPath.'/components/ui/'.$relativePath;
-
-                $this->copyFile($file->getPathname(), $destination, $force);
-            }
-        }
-
-        // Install npm dependencies required by the components
-        $this->installComponentDeps();
-    }
-
-    private function installComponentDeps(): void
-    {
-        $packageJsonPath = base_path('package.json');
-
-        if (! $this->files->exists($packageJsonPath)) {
-            return;
-        }
-
-        $packages = [
-            '@vortechron/query-builder-ts',
-            '@tanstack/vue-table',
-            '@vueuse/core',
-            'class-variance-authority',
-            'clsx',
-            'lucide-vue-next',
-            'reka-ui',
-            'signature_pad',
-            'tailwind-merge',
-        ];
-
-        info('  Installing component dependencies...');
-
-        $process = new Process(array_merge(['npm', 'install', '--save'], $packages));
-        $process->setWorkingDirectory(base_path());
-        $process->setTimeout(120);
-        $process->run(function ($type, $buffer) {
-            $this->output->write($buffer);
-        });
-
-        if (! $process->isSuccessful()) {
-            warning('  Could not install component dependencies. You may need to run: npm install '.implode(' ', $packages));
-        }
     }
 
     private function installLintTools(string $stubsPath, bool $force): void
