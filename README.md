@@ -1,10 +1,12 @@
 # Vicam Kit
 
-Reusable Laravel + Inertia + Vue starter kit with AI guidelines, components, and utilities.
+Reusable Laravel + Inertia + Vue starter kit with AI guidelines, Laravel Data, and optional tooling.
 
 ## New Laravel Project Setup Prompt
 
-Copy this prompt into your coding agent from the root of a new Laravel project:
+Requires Laravel 13.23+, PHP 8.3–8.5, and Node 22.12+. See [compatibility and verification](COMPATIBILITY.md) for the pinned starter and checks.
+
+Copy this prompt into your coding agent from the root of a compatible Laravel project:
 
 ```text
 Set up Vicam Kit in this Laravel project.
@@ -22,7 +24,7 @@ Set up Vicam Kit in this Laravel project.
 
 2. Require the kit from that source:
 
-composer require vicam/vicam-kit
+composer require vicam/vicam-kit:^0.6 --with-all-dependencies
 
 3. Do not run the Vicam Kit installer automatically. Ask me whether I want to run it now, and whether existing generated files should be overwritten.
 
@@ -36,5 +38,13 @@ php artisan vicam:install --force
 
 Then let me answer the interactive installer prompts. If I do not want the installer run yet, stop after requiring the Composer package and tell me I can run php artisan vicam:install later.
 
-The installer copies Vicam guidelines, optional Vue/Inertia components, utility files, lint tooling, and related dependencies. It also runs Laravel Boost's boost:install command during installation, so if that command is unavailable, install/configure Laravel Boost and then rerun php artisan vicam:install.
+The installer copies Vicam guidance and Laravel Data setup. SSR, tenancy, API, lint tooling, and Boost guidance generation are optional. Custom frontend components are no longer included.
 ```
+
+## Unattended installation
+
+```bash
+php artisan vicam:install --no-interaction --lint --ssr --tenancy=path --boost --boost-agents=codex
+```
+
+Omitted features stay off. Use `--api` for Sanctum, `--tenancy=subdomain` for subdomain guidance, `--timeout=1200` for slower installs, and `--skip-dependencies` only to recover an interrupted install. `--guidelines=core` is the only guideline set. Existing files are preserved unless `--force` is set; unrelated configuration is merged.

@@ -1,5 +1,7 @@
 ## API DTOs (REST/JSON APIs)
 
+The installer sets up Sanctum only. The QueryBuilder and Scramble conventions below apply when those packages are separately selected and installed.
+
 - **Response DTO location (MUST):** `app/Data/Api/Responses`
 - **Request DTO location (MUST):** `app/Data/Requests/Api`
 - **Optimized for:** REST APIs + Scramble docs generation

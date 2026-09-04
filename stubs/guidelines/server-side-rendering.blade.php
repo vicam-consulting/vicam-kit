@@ -5,8 +5,8 @@ Deployed with **Inertia v3 SSR enabled**. All frontend code must be SSR-compatib
 ## Deployment
 
 - Production build: `npm run build` (runs `vite build && vite build --ssr`).
-- SSR entry: `resources/js/ssr.ts` using `createSSRApp` + `renderToString`, clustering enabled (`{ cluster: true }`).
-- Client entrypoints (`app.ts`, etc.) MUST use `createSSRApp(...).mount(el)` — never `createApp` — so server HTML is **hydrated**, not re-rendered.
+- The automatic Inertia 3 baseline uses `resources/js/app.ts` for both client and SSR builds. The Inertia Vite plugin supplies server rendering and the Vue adapter supplies `createSSRApp` hydration, retaining the same layouts and plugins on both sides.
+- If the application has a custom manual `setup`, maintain a matching server entry and use `createSSRApp` in the browser. The installer refuses to invent a server implementation for a custom setup.
 - Root Blade uses v3 components: `<x-inertia::head />` and `<x-inertia::app />` (replaces `@inertiaHead` / `@inertia`).
 - Production process managed via `php artisan inertia:start-ssr` / `inertia:stop-ssr`. Development: `@inertiajs/vite` handles SSR automatically via `npm run dev` — no separate process.
 
@@ -20,7 +20,7 @@ During SSR, code runs in **Node.js**. The following do NOT exist on the server a
 
 - **`onMounted(() => { ... })`** — only runs in the browser. Put all browser-dependent logic here (e.g. reading `window.innerWidth`).
 - **Guard in composables/utilities:** `const isBrowser = typeof window !== 'undefined'; if (isBrowser) { ... }`.
-- **Dynamic imports** for browser-only libraries that access the DOM at import time (signature pads, chart libs, WYSIWYG editors): `defineAsyncComponent(() => import('@/components/SignaturePad.vue'))`.
+- **Browser-only imports** must be gated behind `onMounted` or a client-only branch. `defineAsyncComponent` alone is not an SSR guard: the server can resolve async components too.
 - **Client-only rendering:** `const isMounted = ref(false); onMounted(() => isMounted.value = true);` then `<div v-if="isMounted">...</div>`.
 
 ## Hydration Mismatches — Fix the Right Layer

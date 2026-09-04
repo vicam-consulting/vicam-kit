@@ -1,5 +1,7 @@
 # Multitenancy (Path-Based)
 
+Implementation conventions (not scaffolded by the installer).
+
 Uses `spatie/laravel-multitenancy` with **path-based** tenancy (URL prefix `/{tenant}/`, not subdomains). Single shared database; isolation via `tenant_id` foreign keys + query scoping.
 
 ## Core Concepts
@@ -25,7 +27,7 @@ Registered in `bootstrap/app.php` as `'tenant' => SetTenantFromPath::class`. On 
 ## `BelongsToTenant` Trait
 
 Location: `App\Models\Concerns\BelongsToTenant`. Apply to any model with a `tenant_id` column that should be isolated per tenant. Provides:
-- Global scope filtering by `Tenant::current()` (no-op when no tenant active)
+- Global scope filtering by `Tenant::current()` (deny tenant-scoped access when no tenant is active)
 - Auto-assigns `tenant_id` on create
 - `scopeWithoutTenantScope()` — cross-tenant queries
 - `scopeForTenant(Tenant $tenant)` — query a specific tenant
@@ -62,7 +64,7 @@ Login, registration, and invitation acceptance redirect to `route('dashboard.red
 - Add a `tenantUrl(Tenant $tenant, string $path)` helper in `tests/Pest.php` for tenant-scoped test URLs.
 - Call `$tenant->makeCurrent()` before any operation that reads `Tenant::current()` — job dispatch, policy checks, model creation via `BelongsToTenant`.
 - Call `Tenant::forgetCurrent()` in `afterEach` to prevent tenant state leaking between tests.
-- Cross-tenant access returns **403** (policy denies), not 404 (scope hides), because route model binding resolves by ID regardless of scope.
+- Test cross-tenant access is denied; use 403 or 404 consistently with the application’s binding and authorization policy.
 - `BelongsToTenant` creating hook auto-assigns `tenant_id` — if you set an explicit `tenant_id` on a factory, call `makeCurrent()` AFTER creating fixtures so it isn't overwritten.
 
 <code-snippet name="Job test tenant setup" lang="php">
