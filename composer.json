@@ -1,19 +1,12 @@
 {
     "name": "vicam/vicam-kit",
-    "description": "Reusable Laravel + Inertia + Vue starter kit with AI guidelines, components, and utilities",
+    "description": "Reusable Laravel + Inertia + Vue starter kit with AI guidelines and tooling",
     "type": "library",
     "license": "proprietary",
     "require": {
         "php": "^8.3",
-        "laravel/framework": "^13.23",
+        "laravel/framework": "^13.0",
         "laravel/prompts": "^0.3"
-    },
-    "require-dev": {
-        "larastan/larastan": "^3.11",
-        "laravel/pint": "^1.27",
-        "orchestra/testbench": "^11.2",
-        "phpunit/phpunit": "^12.5",
-        "rector/rector": "^2.6"
     },
     "autoload": {
         "psr-4": {
@@ -26,21 +19,6 @@
                 "Vicam\\VicamKit\\VicamKitServiceProvider"
             ]
         }
-    },
-    "scripts": {
-        "lint": [
-            "vendor/bin/pint --test",
-            "vendor/bin/phpstan analyse --memory-limit=2G",
-            "vendor/bin/rector process --dry-run"
-        ],
-        "test": "phpunit",
-        "test:types": "phpstan analyse --memory-limit=2G"
-    },
-    "config": {
-        "platform": {
-            "php": "8.3.0"
-        },
-        "sort-packages": true
     },
     "minimum-stability": "stable",
     "prefer-stable": true

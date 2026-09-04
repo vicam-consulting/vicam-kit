@@ -2,12 +2,12 @@
 
 ## Laravel Multitenancy (Spatie)
 
-These are conventions for a single-database Spatie Laravel Multitenancy v4 implementation. The installer publishes package configuration only; the tenant model, finder, traits, and isolation below remain application work. Documentation: https://spatie.be/docs/laravel-multitenancy/v4/introduction
+This project uses Spatie Laravel Multitenancy v4 with a single database configuration. Documentation: https://spatie.be/docs/laravel-multitenancy/v4/introduction
 
 ## Core Configuration
 
 - **Single Database Setup**: All tenants share the same database, differentiated by `tenant_id` columns
-- **Tenant Resolution**: Use the selected path or subdomain guidance; implement and register the matching finder/middleware.
+- **Domain/Subdomain Tenant Resolution**: Uses `DomainOrSubdomainTenantFinder` to determine current tenant
 - **Cache Prefixing**: Enabled via `PrefixCacheTask` to isolate tenant data in cache
 
 ## Tenant-Aware Models

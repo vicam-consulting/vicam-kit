@@ -1,7 +1,4 @@
-/vendor/
-/.phpunit.result.cache
-/.phpunit.cache/
-/.clean-room.*/
-/.php-version
-/.env*
-/node_modules/
+.DS_Store
+vendor/
+.idea/
+.vscode/

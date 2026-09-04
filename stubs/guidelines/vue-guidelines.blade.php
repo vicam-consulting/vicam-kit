@@ -23,7 +23,7 @@ Vue 3 + TypeScript + Inertia v3 + shadcn/ui.
 
 ## Dates & Time
 
-Use `resources/js/lib/datetime.utils.ts`:
+If the application provides `resources/js/lib/datetime.utils.ts`, use:
 - `utcToLocal(isoUtc)` — display UTC timestamps.
 - `nowLocal()` — prefill `datetime-local` inputs.
 - `localToUtc(value)` — convert local input values to UTC before submit.
