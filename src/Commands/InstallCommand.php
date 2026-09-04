@@ -1,495 +1,591 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Vicam\VicamKit\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
+use RuntimeException;
 use Symfony\Component\Process\Process;
+use Throwable;
+use Vicam\VicamKit\Support\CompatibilityManifest;
+use Vicam\VicamKit\Support\JsonProjectFile;
+use Vicam\VicamKit\Support\ProviderRegistrar;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\info;
-use function Laravel\Prompts\multiselect;
 use function Laravel\Prompts\note;
+use function Laravel\Prompts\select;
 use function Laravel\Prompts\warning;
 
-class InstallCommand extends Command
+final class InstallCommand extends Command
 {
-    protected $signature = 'vicam:install {--force : Overwrite existing files}';
+    protected $signature = 'vicam:install
+        {--guidelines=core : Guideline set (core)}
+        {--ssr : Configure Inertia server-side rendering}
+        {--tenancy=none : Tenancy mode (none, path, subdomain)}
+        {--api : Install Laravel Sanctum API support}
+        {--lint : Install the Vicam lint configuration and dependencies}
+        {--boost : Run Boost generation after installing source guidance}
+        {--boost-agents= : Comma-separated Boost agents for first-time guidance generation}
+        {--force : Overwrite Vicam-owned files that already exist}
+        {--skip-dependencies : Skip dependency resolution when recovering an interrupted install}
+        {--timeout=900 : Dependency command timeout in seconds}';
 
-    protected $description = 'Install Vicam Kit guidelines, components, and utilities';
+    protected $description = 'Install the Laravel 13 Vicam application conventions';
 
-    private Filesystem $files;
+    private readonly Filesystem $files;
 
-    private int $copiedCount = 0;
+    private readonly CompatibilityManifest $compatibility;
 
-    private int $skippedCount = 0;
+    /** @var array{copied: array<int, string>, skipped: array<int, string>, failed: array<int, string>} */
+    private array $summary = ['copied' => [], 'skipped' => [], 'failed' => []];
 
     public function __construct()
     {
         parent::__construct();
         $this->files = new Filesystem;
+        $this->compatibility = new CompatibilityManifest;
     }
 
     public function handle(): int
     {
-        $force = $this->option('force');
-        $stubsPath = $this->stubsPath();
+        try {
+            $selection = $this->selection();
+            $this->validateEnvironment($selection);
 
-        $selected = $this->installGuidelines($stubsPath, $force);
-        $this->installComponents($stubsPath, $force);
+            if (! $this->option('skip-dependencies')) {
+                $this->installDependencies($selection);
+            }
 
-        // Install laravel-data configs if any laravel-data guidelines were selected
-        $dataGuidelines = ['laravel-data-core', 'laravel-data-inertia', 'laravel-data-api'];
+            $this->installSourceGuidance($selection);
+            $this->installLaravelData();
 
-        if (array_intersect($selected, $dataGuidelines) !== []) {
-            $this->installLaravelDataConfigs($stubsPath, $force);
+            if ($selection['lint']) {
+                $this->installLintConfiguration();
+            }
+
+            if ($selection['ssr']) {
+                $this->configureSsr();
+            }
+
+            if ($selection['tenancy'] !== 'none') {
+                $this->configureTenancy();
+            }
+
+            if ($selection['api']) {
+                $this->configureApi();
+            }
+
+            $this->mergeGitignore();
+
+            if ($selection['lint']) {
+                $this->formatManagedPhpFiles($selection['tenancy'] !== 'none');
+            }
+
+            $this->transformTypes();
+
+            if ($selection['boost']) {
+                $this->generateBoostFiles();
+            }
+        } catch (Throwable $exception) {
+            $this->summary['failed'][] = $exception->getMessage();
+            $this->error($exception->getMessage());
+            $this->printSummary();
+
+            return self::FAILURE;
         }
 
-        $this->newLine();
-        info("Vicam Kit installed: {$this->copiedCount} files copied, {$this->skippedCount} skipped.");
-
-        $this->newLine();
-        info('Running boost:install to generate CLAUDE.md and MCP config...');
-        $this->call('boost:install');
+        $this->printSummary();
 
         return self::SUCCESS;
     }
 
-    /**
-     * @return array<int, string> The selected guideline keys
+    /** @return array{ssr: bool, tenancy: string, api: bool, lint: bool, boost: bool} */
+    private function selection(): array
+    {
+        if ($this->option('guidelines') !== 'core') {
+            throw new RuntimeException('The only supported guideline set is "core". Feature guidance is selected with --ssr, --tenancy, and --api.');
+        }
+
+        if (! $this->input->isInteractive()) {
+            $tenancy = $this->option('tenancy');
+
+            if (! is_string($tenancy)) {
+                throw new RuntimeException('The --tenancy option must be a string.');
+            }
+
+            return [
+                'ssr' => (bool) $this->option('ssr'),
+                'tenancy' => $this->validTenancyMode($tenancy),
+                'api' => (bool) $this->option('api'),
+                'lint' => (bool) $this->option('lint'),
+                'boost' => (bool) $this->option('boost'),
+            ];
+        }
+
+        $ssr = confirm('Configure Inertia SSR?', false);
+        $tenancy = select(
+            label: 'Which tenancy guidance and package setup should be installed?',
+            options: ['none' => 'None', 'path' => 'Path-based', 'subdomain' => 'Subdomain-based'],
+            default: 'none',
+        );
+
+        if (! is_string($tenancy)) {
+            throw new RuntimeException('The selected tenancy mode must be a string.');
+        }
+
+        return [
+            'ssr' => $ssr,
+            'tenancy' => $this->validTenancyMode($tenancy),
+            'api' => confirm('Install Laravel Sanctum API support?', false),
+            'lint' => confirm('Install Vicam lint tooling?', true),
+            'boost' => confirm('Run Laravel Boost generation after source installation?', true),
+        ];
+    }
+
+    private function validTenancyMode(string $mode): string
+    {
+        if (! in_array($mode, ['none', 'path', 'subdomain'], true)) {
+            throw new RuntimeException("Invalid tenancy mode '{$mode}'. Expected none, path, or subdomain.");
+        }
+
+        return $mode;
+    }
+
+    /** @param array{ssr: bool, tenancy: string, api: bool, lint: bool, boost: bool} $selection */
+    private function validateEnvironment(array $selection): void
+    {
+        $this->timeout();
+        $nodeVersion = null;
+
+        if (! $this->option('skip-dependencies')) {
+            $node = new Process(['node', '--version'], base_path());
+            $node->run();
+            if (! $node->isSuccessful()) {
+                throw new RuntimeException('Node.js is required. Install Node 22.12 or newer before running vicam:install.');
+            }
+            $nodeVersion = trim($node->getOutput());
+        }
+
+        $this->compatibility->assertSupported(app()->version(), $nodeVersion);
+
+        if ($selection['ssr'] && $nodeVersion !== null && version_compare(ltrim($nodeVersion, 'v'), '22.0.0', '<')) {
+            throw new RuntimeException("Inertia 3 SSR requires Node 22 or newer; detected {$nodeVersion}.");
+        }
+
+        if (! $this->files->exists(base_path('composer.json')) || ! $this->files->exists(base_path('package.json'))) {
+            throw new RuntimeException('Vicam Kit requires an existing Laravel 13 + Inertia Vue application with composer.json and package.json.');
+        }
+
+        if ($selection['ssr'] && ! $this->files->exists(resource_path('js/app.ts'))) {
+            throw new RuntimeException('SSR setup requires the supported TypeScript entry at resources/js/app.ts.');
+        }
+    }
+
+    /** @param array{ssr: bool, tenancy: string, api: bool, lint: bool, boost: bool} $selection */
+    private function installDependencies(array $selection): void
+    {
+        info('Resolving the Laravel 13 compatibility manifest...');
+        $snapshots = [];
+
+        foreach (['composer.json', 'composer.lock', 'package.json', 'package-lock.json'] as $file) {
+            $path = base_path($file);
+            $snapshots[$path] = $this->files->exists($path) ? $this->files->get($path) : null;
+        }
+
+        try {
+            $composer = new JsonProjectFile($this->files, base_path('composer.json'));
+            $composerBefore = $composer->all();
+            $prod = $this->compatibility->composerRequirements($selection['tenancy'] !== 'none', $selection['api']);
+            $platform = $composerBefore['config']['platform']['php'] ?? PHP_VERSION;
+            if (! is_string($platform)) {
+                throw new RuntimeException('Composer config.platform.php must be a supported PHP version string.');
+            }
+            $dev = $this->compatibility->composerDevRequirements($selection['lint'], $selection['boost'], version_compare($platform, '8.4.1', '>=') ? 80401 : 80300);
+            $composer
+                ->mergeDependencies('require', 'require-dev', $prod, $dev)
+                ->addMissingMap('scripts', $this->composerScripts($selection['ssr'], $selection['lint']))
+                ->save();
+
+            $package = new JsonProjectFile($this->files, base_path('package.json'));
+            $packageBefore = $package->all();
+            $package
+                ->mergeDependencies('dependencies', 'devDependencies', $this->compatibility->npmDependencies(), $this->compatibility->npmDevDependencies($selection['lint']))
+                ->addMissingMap('scripts', $this->npmScripts($selection['ssr'], $selection['lint']))
+                ->removePlatformOptionalDependencies()
+                ->save();
+
+            $composerPackages = [...array_keys($prod), ...array_keys($dev)];
+            if ($this->files->exists(base_path('composer.lock')) && $this->sameDependencies($composerBefore, $composer->all(), ['require', 'require-dev'])) {
+                $this->runRequired(['composer', 'install', '--no-interaction', '--no-progress']);
+            } else {
+                $packages = $this->files->exists(base_path('composer.lock')) ? $composerPackages : [];
+                $this->runRequired(['composer', 'update', ...$packages, '--with-all-dependencies', '--no-interaction', '--no-progress']);
+            }
+            if (! $this->files->exists(base_path('package-lock.json')) || ! $this->sameDependencies($packageBefore, $package->all(), ['dependencies', 'devDependencies', 'optionalDependencies'])) {
+                $this->runRequired(['npm', 'install', '--package-lock-only', '--no-audit', '--no-fund']);
+            }
+            $this->runRequired(['npm', 'ci', '--no-audit', '--no-fund']);
+        } catch (Throwable $exception) {
+            foreach ($snapshots as $path => $contents) {
+                if ($contents === null) {
+                    if ($this->files->exists($path)) {
+                        $this->files->delete($path);
+                    }
+                } else {
+                    $this->files->put($path, $contents);
+                }
+            }
+
+            throw new RuntimeException('Dependency installation failed; project manifests and lockfiles were restored. '.$exception->getMessage(), 0, $exception);
+        }
+    }
+
+    /** @return array<string, string|array<int, string>> */
+    private function composerScripts(bool $ssr, bool $lint): array
+    {
+        $scripts = ['security:audit' => 'composer audit'];
+        if ($lint) {
+            $scripts += [
+                'lint' => ['vendor/bin/pint', 'vendor/bin/rector process'],
+                'test:types' => 'phpstan analyse --memory-limit=2G',
+            ];
+        }
+
+        if ($ssr) {
+            $scripts['ssr:start'] = '@php artisan inertia:start-ssr';
+        }
+
+        return $scripts;
+    }
+
+    /** @param array<string, mixed> $before
+     * @param  array<string, mixed>  $after
+     * @param  array<int, string>  $sections
      */
-    private function installGuidelines(string $stubsPath, bool $force): array
+    private function sameDependencies(array $before, array $after, array $sections): bool
     {
-        $coreGuidelines = [
-            'architecture' => 'architecture.blade.php',
-            'laravel-data-core' => 'laravel-data-core.blade.php',
-            'laravel-data-inertia' => 'laravel-data-inertia.blade.php',
-            'vue-guidelines' => 'vue-guidelines.blade.php',
-            'laravel-core-overrides' => 'laravel/core.blade.php',
-        ];
-
-        $optionalGuidelines = [
-            'multitenancy' => 'multitenancy-guidelines.blade.php',
-            'multitenancy-path-based' => 'multitenancy-path-based.blade.php',
-            'laravel-data-api' => 'laravel-data-api.blade.php',
-            'server-side-rendering' => 'server-side-rendering.blade.php',
-        ];
-
-        $allGuidelines = array_merge($coreGuidelines, $optionalGuidelines);
-
-        $selected = multiselect(
-            label: 'Which guidelines do you want to install?',
-            options: [
-                'architecture' => 'Architecture (Actions, DTOs, thin controllers)',
-                'laravel-data-core' => 'Laravel Data - Core',
-                'laravel-data-inertia' => 'Laravel Data - Inertia',
-                'vue-guidelines' => 'Vue Guidelines',
-                'laravel-core-overrides' => 'Laravel Core Overrides',
-                'multitenancy' => 'Multitenancy (Spatie - Subdomain)',
-                'multitenancy-path-based' => 'Multitenancy (Spatie - Path-Based)',
-                'laravel-data-api' => 'Laravel Data - API (Scramble)',
-                'server-side-rendering' => 'Server-Side Rendering (Inertia SSR)',
-            ],
-            default: array_keys($coreGuidelines),
-        );
-
-        $guidelinesPath = base_path('.ai/guidelines');
-
-        foreach ($selected as $key) {
-            $file = $allGuidelines[$key];
-            $source = $stubsPath.'/guidelines/'.$file;
-            $destination = $guidelinesPath.'/'.$file;
-
-            $this->copyFile($source, $destination, $force);
-        }
-
-        // Ask about lint-fix skill
-        $installSkill = confirm(
-            label: 'Install the lint-fix skill?',
-            default: true,
-        );
-
-        if ($installSkill) {
-            $source = $stubsPath.'/skills/lint-fix/SKILL.md';
-            $destination = base_path('.ai/skills/lint-fix/SKILL.md');
-            $this->copyFile($source, $destination, $force);
-            $this->installLintTools($stubsPath, $force);
-        }
-
-        return $selected;
-    }
-
-    private function installComponents(string $stubsPath, bool $force): void
-    {
-        $installComponents = confirm(
-            label: 'Install additional components? (form-field, combobox, utilities, composables, etc.)',
-            default: true,
-        );
-
-        if (! $installComponents) {
-            return;
-        }
-
-        $frontendPath = $stubsPath.'/frontend';
-        $resourcesPath = base_path('resources/js');
-
-        // Copy components, composables, and lib utilities
-        $mappings = [
-            'components' => $resourcesPath.'/components',
-            'composables' => $resourcesPath.'/composables',
-            'lib' => $resourcesPath.'/lib',
-        ];
-
-        foreach ($mappings as $stubDir => $targetDir) {
-            $sourceDir = $frontendPath.'/'.$stubDir;
-
-            if (! $this->files->isDirectory($sourceDir)) {
-                continue;
-            }
-
-            $files = $this->files->allFiles($sourceDir);
-
-            foreach ($files as $file) {
-                $relativePath = $file->getRelativePathname();
-                $destination = $targetDir.'/'.$relativePath;
-
-                $this->copyFile($file->getPathname(), $destination, $force);
+        foreach ($sections as $section) {
+            if (($before[$section] ?? []) != ($after[$section] ?? [])) {
+                return false;
             }
         }
 
-        // Copy custom UI components
-        $uiSourceDir = $frontendPath.'/ui';
-
-        if ($this->files->isDirectory($uiSourceDir)) {
-            $uiFiles = $this->files->allFiles($uiSourceDir);
-
-            foreach ($uiFiles as $file) {
-                $relativePath = $file->getRelativePathname();
-                $destination = $resourcesPath.'/components/ui/'.$relativePath;
-
-                $this->copyFile($file->getPathname(), $destination, $force);
-            }
-        }
-
-        // Install npm dependencies required by the components
-        $this->installComponentDeps();
+        return true;
     }
 
-    private function installComponentDeps(): void
+    /** @return array<string, string> */
+    private function npmScripts(bool $ssr, bool $lint): array
     {
-        $packageJsonPath = base_path('package.json');
+        $scripts = ['types' => 'vue-tsc --noEmit', 'security:audit' => 'npm audit'];
 
-        if (! $this->files->exists($packageJsonPath)) {
-            return;
+        if ($ssr) {
+            $scripts += ['build:ssr' => 'vite build --ssr'];
         }
 
-        $packages = [
-            '@vortechron/query-builder-ts',
-            '@tanstack/vue-table',
-            '@vueuse/core',
-            'class-variance-authority',
-            'clsx',
-            'lucide-vue-next',
-            'reka-ui',
-            'signature_pad',
-            'tailwind-merge',
+        if ($lint) {
+            $scripts += [
+                'lint' => 'eslint . --fix',
+                'lint:check' => 'eslint .',
+                'format' => 'prettier --write resources/',
+                'format:check' => 'prettier --check resources/',
+            ];
+        }
+
+        return $scripts;
+    }
+
+    /** @param array{ssr: bool, tenancy: string, api: bool, lint: bool, boost: bool} $selection */
+    private function installSourceGuidance(array $selection): void
+    {
+        $guidelines = [
+            'architecture.blade.php' => 'architecture.md',
+            'laravel-data-core.blade.php' => 'laravel-data-core.md',
+            'laravel-data-inertia.blade.php' => 'laravel-data-inertia.md',
+            'laravel/core.blade.php' => 'laravel/core.md',
+            'vue-guidelines.blade.php' => 'vue-guidelines.md',
         ];
 
-        info('  Installing component dependencies...');
+        if ($selection['ssr']) {
+            $guidelines['server-side-rendering.blade.php'] = 'server-side-rendering.md';
+        }
 
-        $process = new Process(array_merge(['npm', 'install', '--save'], $packages));
-        $process->setWorkingDirectory(base_path());
-        $process->setTimeout(120);
-        $process->run(function ($type, $buffer) {
-            $this->output->write($buffer);
-        });
+        if ($selection['tenancy'] !== 'none') {
+            $guidelines['multitenancy-guidelines.blade.php'] = 'multitenancy-guidelines.md';
+            $guidelines[$selection['tenancy'] === 'path'
+                ? 'multitenancy-path-based.blade.php'
+                : 'multitenancy-subdomain.blade.php'] = 'multitenancy-'.$selection['tenancy'].'-based.md';
+        }
 
-        if (! $process->isSuccessful()) {
-            warning('  Could not install component dependencies. You may need to run: npm install '.implode(' ', $packages));
+        if ($selection['api']) {
+            $guidelines['laravel-data-api.blade.php'] = 'laravel-data-api.md';
+        }
+
+        foreach ($guidelines as $source => $destination) {
+            $this->copyFile($this->stubsPath().'/guidelines/'.$source, base_path('.ai/guidelines/'.$destination));
+        }
+
+        if ($selection['lint']) {
+            $this->copyFile($this->stubsPath().'/skills/lint-fix/SKILL.md', base_path('.ai/skills/lint-fix/SKILL.md'));
         }
     }
 
-    private function installLintTools(string $stubsPath, bool $force): void
+    private function installLaravelData(): void
     {
-        $this->newLine();
-        info('Setting up lint tools for the lint-fix skill...');
+        $this->copyFile($this->stubsPath().'/configs/data.php', config_path('data.php'));
+        $this->copyFile($this->stubsPath().'/support/Typescript/FlatExportWriter.php', app_path('Support/Typescript/FlatExportWriter.php'));
+        $this->copyFile($this->stubsPath().'/providers/TypeScriptTransformerServiceProvider.stub', app_path('Providers/TypeScriptTransformerServiceProvider.php'));
+        $this->registerProvider();
 
-        $this->copyLintConfigs($stubsPath, $force);
-        $this->addComposerScriptsAndDeps();
-        $this->addNpmScriptsAndDeps();
-    }
-
-    private function copyLintConfigs(string $stubsPath, bool $force): void
-    {
-        $lintConfigsPath = $stubsPath.'/lint-configs';
-
-        $configFiles = [
-            'phpstan.neon' => base_path('phpstan.neon'),
-            'eslint.config.js' => base_path('eslint.config.js'),
-            '.prettierrc' => base_path('.prettierrc'),
-            '.prettierignore' => base_path('.prettierignore'),
-            'rector.php' => base_path('rector.php'),
-        ];
-
-        foreach ($configFiles as $source => $destination) {
-            $this->copyFile($lintConfigsPath.'/'.$source, $destination, $force);
+        foreach (['Data/Requests', 'Data/Responses', 'Enums'] as $directory) {
+            $this->ensureTrackedDirectory(app_path($directory));
         }
     }
 
-    private function addComposerScriptsAndDeps(): void
+    private function installLintConfiguration(): void
     {
-        $composerJsonPath = base_path('composer.json');
-        $composerJson = json_decode($this->files->get($composerJsonPath), true);
-
-        $scriptsToAdd = [
-            'lint' => [
-                'vendor/bin/pint',
-                'vendor/bin/rector process',
-            ],
-            'test:types' => 'phpstan analyse --memory-limit=2G',
-        ];
-
-        $addedScripts = [];
-
-        foreach ($scriptsToAdd as $name => $command) {
-            if (! isset($composerJson['scripts'][$name])) {
-                $composerJson['scripts'][$name] = $command;
-                $addedScripts[] = $name;
-            }
+        foreach (['phpstan.neon', 'eslint.config.js', '.prettierrc', '.prettierignore', 'rector.php'] as $file) {
+            $this->copyFile($this->stubsPath().'/lint-configs/'.$file, base_path($file));
         }
+        $this->runRequired(['node', __DIR__.'/../Support/merge-eslint.mjs', base_path()]);
+        $this->appendLines(base_path('.prettierignore'), [
+            'resources/js/actions/**', 'resources/js/routes/**', 'resources/js/wayfinder/**',
+            'bootstrap/ssr/**', 'resources/js/types/typescript-transformer-manifest.json',
+        ]);
 
-        if (! empty($addedScripts)) {
-            $this->files->put(
-                $composerJsonPath,
-                json_encode($composerJson, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n"
-            );
-
-            foreach ($addedScripts as $script) {
-                note("  Added composer script: {$script}");
-            }
-        }
-
-        $packages = ['laravel/pint', 'larastan/larastan', 'rector/rector'];
-        info('  Installing '.implode(', ', $packages).'...');
-
-        $process = new Process(array_merge(['composer', 'require', '--dev', '--no-interaction'], $packages));
-        $process->setWorkingDirectory(base_path());
-        $process->setTimeout(120);
-        $process->run(function ($type, $buffer) {
-            $this->output->write($buffer);
-        });
-
-        if (! $process->isSuccessful()) {
-            warning('  Could not install PHP lint dependencies. You may need to run: composer require --dev '.implode(' ', $packages));
-        }
     }
 
-    private function addNpmScriptsAndDeps(): void
+    private function configureSsr(): void
     {
-        $packageJsonPath = base_path('package.json');
-
-        if (! $this->files->exists($packageJsonPath)) {
-            warning('  package.json not found, skipping npm lint setup.');
-
-            return;
-        }
-
-        $packageJson = json_decode($this->files->get($packageJsonPath), true);
-
-        $scriptsToAdd = [
-            'lint' => 'eslint . --fix',
-            'format' => 'prettier --write resources/',
-            'lint:types' => 'vue-tsc --noEmit',
-        ];
-
-        $addedScripts = [];
-
-        foreach ($scriptsToAdd as $name => $command) {
-            if (! isset($packageJson['scripts'][$name])) {
-                $packageJson['scripts'][$name] = $command;
-                $addedScripts[] = $name;
-            }
-        }
-
-        if (! empty($addedScripts)) {
-            $this->files->put(
-                $packageJsonPath,
-                json_encode($packageJson, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n"
-            );
-
-            foreach ($addedScripts as $script) {
-                note("  Added npm script: {$script}");
-            }
-        }
-
-        $packages = [
-            'eslint',
-            '@eslint/js',
-            '@stylistic/eslint-plugin',
-            '@vue/eslint-config-typescript',
-            'eslint-config-prettier',
-            'eslint-import-resolver-typescript',
-            'eslint-plugin-import',
-            'eslint-plugin-vue',
-            'typescript-eslint',
-            'prettier',
-            'prettier-plugin-tailwindcss',
-            'vue-tsc',
-        ];
-
-        info('  Installing npm lint dependencies...');
-
-        $process = new Process(array_merge(['npm', 'install', '--save-dev'], $packages));
-        $process->setWorkingDirectory(base_path());
-        $process->setTimeout(120);
-        $process->run(function ($type, $buffer) {
-            $this->output->write($buffer);
-        });
-
-        if (! $process->isSuccessful()) {
-            warning('  Could not install npm lint dependencies. You may need to run: npm install --save-dev '.implode(' ', $packages));
-        }
-    }
-
-    private function installLaravelDataConfigs(string $stubsPath, bool $force): void
-    {
-        $installDataConfigs = confirm(
-            label: 'Install laravel-data & typescript-transformer config files?',
-            default: true,
-        );
-
-        if (! $installDataConfigs) {
-            return;
-        }
-
-        $this->newLine();
-        info('Setting up laravel-data configuration...');
-
-        // Install composer dependencies first (before copying configs that reference their classes)
-        $devPackages = ['spatie/laravel-typescript-transformer'];
-        $prodPackages = ['spatie/laravel-data'];
-
-        info('  Installing spatie/laravel-data...');
-
-        $process = new Process(array_merge(['composer', 'require', '--no-interaction', '-W'], $prodPackages));
-        $process->setWorkingDirectory(base_path());
-        $process->setTimeout(120);
-        $process->run(function ($type, $buffer) {
-            $this->output->write($buffer);
-        });
-
-        if (! $process->isSuccessful()) {
-            warning('  Could not install spatie/laravel-data. You may need to run: composer require '.implode(' ', $prodPackages));
-            warning('  Skipping config file copy since package installation failed.');
-
-            return;
-        }
-
-        info('  Installing spatie/laravel-typescript-transformer...');
-
-        $process = new Process(array_merge(['composer', 'require', '--dev', '--no-interaction', '-W'], $devPackages));
-        $process->setWorkingDirectory(base_path());
-        $process->setTimeout(120);
-        $process->run(function ($type, $buffer) {
-            $this->output->write($buffer);
-        });
-
-        if (! $process->isSuccessful()) {
-            warning('  Could not install spatie/laravel-typescript-transformer. You may need to run: composer require --dev '.implode(' ', $devPackages));
-        }
-
-        // Copy config files after packages are installed (configs reference package classes)
-        $configsPath = $stubsPath.'/configs';
-        $this->copyFile($configsPath.'/data.php', base_path('config/data.php'), $force);
-
-        // Copy FlatExportWriter support class
-        $this->copyFile(
-            $stubsPath.'/support/Typescript/FlatExportWriter.php',
-            base_path('app/Support/Typescript/FlatExportWriter.php'),
-            $force
-        );
-
-        // typescript-transformer v3 reads its config from a user-defined ServiceProvider
-        // extending TypeScriptTransformerApplicationServiceProvider — there is no config file.
-        // Copy our provider stub, register it, and scaffold the directories it scans.
-        $this->copyFile(
-            $stubsPath.'/providers/TypeScriptTransformerServiceProvider.stub',
-            base_path('app/Providers/TypeScriptTransformerServiceProvider.php'),
-            $force
-        );
-
-        $this->registerTypeScriptTransformerProvider();
-        $this->scaffoldDataAndEnumsDirectories();
-    }
-
-    private function registerTypeScriptTransformerProvider(): void
-    {
-        $providersPath = base_path('bootstrap/providers.php');
-
-        if (! $this->files->exists($providersPath)) {
-            warning('  bootstrap/providers.php not found — register App\Providers\TypeScriptTransformerServiceProvider manually.');
-
-            return;
-        }
-
-        $contents = $this->files->get($providersPath);
-
-        if (str_contains($contents, 'TypeScriptTransformerServiceProvider')) {
-            return;
-        }
-
-        $updated = preg_replace(
-            '/(return\s*\[\s*\n)((?:\s*[^\n]+\n)*?)(\s*\];)/',
-            "$1$2    App\\Providers\\TypeScriptTransformerServiceProvider::class,\n$3",
+        $this->runRequired(['node', __DIR__.'/../Support/configure-frontend.mjs', base_path(), 'ssr']);
+        $this->mergeText(resource_path('views/app.blade.php'), static fn (string $contents): string => str_replace(
+            ['@inertiaHead', '@inertia'],
+            ['<x-inertia::head />', '<x-inertia::app />'],
             $contents,
-            1,
-        );
+        ));
 
-        if ($updated === null || $updated === $contents) {
-            warning('  Could not auto-register TypeScriptTransformerServiceProvider in bootstrap/providers.php — add it manually.');
+        $package = new JsonProjectFile($this->files, base_path('package.json'));
+        $scripts = $package->all()['scripts'] ?? [];
+
+        if (is_array($scripts)) {
+            $client = $scripts['build:client'] ?? $scripts['build'] ?? 'vite build';
+            if (! is_string($client)) {
+                throw new RuntimeException('The existing build script must be a string.');
+            }
+            $package->mergeMap('scripts', [
+                'build:client' => $client,
+                'build' => 'npm run build:client && npm run build:ssr',
+            ])->addMissingMap('scripts', ['build:ssr' => 'vite build --ssr'])->save();
+        }
+    }
+
+    private function configureTenancy(): void
+    {
+        if (! $this->files->exists(config_path('multitenancy.php'))) {
+            $this->runArtisanRequired(['vendor:publish', '--provider=Spatie\\Multitenancy\\MultitenancyServiceProvider', '--tag=multitenancy-config', '--no-interaction']);
+            $this->summary['copied'][] = 'config/multitenancy.php';
+        }
+    }
+
+    private function configureApi(): void
+    {
+        if (! $this->files->exists(base_path('routes/api.php'))) {
+            $this->runArtisanRequired(['install:api', '--without-migration-prompt', '--no-interaction']);
+        }
+
+        $this->ensureTrackedDirectory(app_path('Data/Api/Responses'));
+        $this->ensureTrackedDirectory(app_path('Data/Requests/Api'));
+    }
+
+    private function transformTypes(): void
+    {
+        $this->runArtisanRequired(['typescript:transform']);
+        if (! $this->files->exists(resource_path('js/types/generated.ts'))) {
+            throw new RuntimeException('TypeScript Transformer did not produce resources/js/types/generated.ts. Review the existing provider configuration.');
+        }
+        if ($this->files->exists(base_path('node_modules/.bin/prettier'))) {
+            $this->runRequired([base_path('node_modules/.bin/prettier'), '--write', 'resources/js/types/generated.ts']);
+        }
+    }
+
+    private function generateBoostFiles(): void
+    {
+        $agents = $this->option('boost-agents');
+        if (! is_string($agents)) {
+            throw new RuntimeException('--boost-agents must be a comma-separated string.');
+        }
+        $this->runRequired([PHP_BINARY, dirname(__DIR__).'/Support/regenerate-boost.php.stub', base_path(), $agents]);
+    }
+
+    private function registerProvider(): void
+    {
+        $path = base_path('bootstrap/providers.php');
+
+        if (! $this->files->exists($path)) {
+            throw new RuntimeException('bootstrap/providers.php is required for TypeScript Transformer registration.');
+        }
+
+        $this->mergeText($path, (new ProviderRegistrar)->merge(...));
+    }
+
+    private function mergeGitignore(): void
+    {
+        $path = base_path('.gitignore');
+        $contents = $this->files->exists($path) ? rtrim($this->files->get($path)) : '';
+        $entries = [
+            '/bootstrap/ssr', '/public/build', '/resources/js/actions', '/resources/js/routes',
+            '/resources/js/wayfinder', '/AGENTS.md', '/CLAUDE.md', '/.agents/', '/.claude/',
+            '/.codex/', '/.cursor/', '/.mcp.json', '/boost.json', '/database/*.sqlite',
+        ];
+
+        foreach ($entries as $entry) {
+            if (! preg_match('/^'.preg_quote($entry, '/').'$/m', $contents)) {
+                $contents .= "\n{$entry}";
+            }
+        }
+
+        $this->files->put($path, ltrim($contents)."\n");
+    }
+
+    private function formatManagedPhpFiles(bool $tenancy): void
+    {
+        $files = [
+            'app/Providers/TypeScriptTransformerServiceProvider.php',
+            'app/Support/Typescript/FlatExportWriter.php',
+            'bootstrap/providers.php',
+            'config/data.php',
+        ];
+
+        if ($tenancy) {
+            $files[] = 'config/multitenancy.php';
+        }
+
+        $files = array_values(array_filter($files, fn (string $file): bool => in_array($file, $this->summary['copied'], true) ||
+            in_array($file.' (merged)', $this->summary['copied'], true)
+        ));
+        if ($files !== []) {
+            $this->runRequired([base_path('vendor/bin/pint'), ...$files]);
+        }
+    }
+
+    private function ensureTrackedDirectory(string $directory): void
+    {
+        $this->files->ensureDirectoryExists($directory);
+        $path = $directory.'/.gitkeep';
+
+        if (! $this->files->exists($path)) {
+            $this->files->put($path, '');
+            $this->summary['copied'][] = $this->relative($path);
+        }
+    }
+
+    /** @param array<int, string> $entries */
+    private function appendLines(string $path, array $entries): void
+    {
+        $contents = $this->files->exists($path) ? $this->files->get($path) : '';
+        $lines = preg_split('/\\R/', $contents) ?: [];
+        foreach ($entries as $entry) {
+            if (! in_array($entry, $lines, true)) {
+                $contents = rtrim($contents)."\n".$entry."\n";
+            }
+        }
+        $this->files->put($path, $contents);
+    }
+
+    /** @param callable(string): string $callback */
+    private function mergeText(string $path, callable $callback): void
+    {
+        if (! $this->files->exists($path)) {
+            throw new RuntimeException('Required file not found: '.$this->relative($path));
+        }
+
+        $before = $this->files->get($path);
+        $after = $callback($before);
+
+        if ($after === $before) {
+            $this->summary['skipped'][] = $this->relative($path);
 
             return;
         }
 
-        $this->files->put($providersPath, $updated);
-        note('  Registered App\Providers\TypeScriptTransformerServiceProvider in bootstrap/providers.php');
+        $this->files->put($path, $after);
+        $this->summary['copied'][] = $this->relative($path).' (merged)';
     }
 
-    private function scaffoldDataAndEnumsDirectories(): void
-    {
-        foreach ([app_path('Data'), app_path('Enums')] as $directory) {
-            $this->files->ensureDirectoryExists($directory);
-
-            $gitkeep = $directory.'/.gitkeep';
-
-            if (! $this->files->exists($gitkeep)) {
-                $this->files->put($gitkeep, '');
-                $relative = str_replace(base_path().'/', '', $gitkeep);
-                note("  Created: {$relative}");
-            }
-        }
-    }
-
-    private function copyFile(string $source, string $destination, bool $force): void
+    private function copyFile(string $source, string $destination): void
     {
         if (! $this->files->exists($source)) {
-            return;
+            throw new RuntimeException('Vicam source file is missing: '.$source);
         }
 
-        if ($this->files->exists($destination) && ! $force) {
-            $relativePath = str_replace(base_path().'/', '', $destination);
-            warning("  Skipped: {$relativePath} (already exists, use --force to overwrite)");
-            $this->skippedCount++;
+        if ($this->files->exists($destination) && ! $this->option('force')) {
+            $this->summary['skipped'][] = $this->relative($destination);
 
             return;
         }
 
         $this->files->ensureDirectoryExists(dirname($destination));
         $this->files->copy($source, $destination);
+        $this->summary['copied'][] = $this->relative($destination);
+    }
 
-        $relativePath = str_replace(base_path().'/', '', $destination);
-        note("  Copied: {$relativePath}");
-        $this->copiedCount++;
+    /** @param array<int, string> $command */
+    private function runRequired(array $command): void
+    {
+        $process = new Process($command, base_path());
+        $process->setTimeout($this->timeout());
+        $process->run(fn (string $type, string $buffer) => $this->output->write($buffer));
+
+        if (! $process->isSuccessful()) {
+            throw new RuntimeException(sprintf(
+                'Command failed (exit %s): %s%s%s',
+                $process->getExitCode() ?? 'unknown',
+                $process->getCommandLine(),
+                PHP_EOL,
+                trim($process->getErrorOutput() ?: $process->getOutput()),
+            ));
+        }
+    }
+
+    /** @param array<int, string> $arguments */
+    private function runArtisanRequired(array $arguments): void
+    {
+        $this->runRequired([PHP_BINARY, base_path('artisan'), ...$arguments]);
+    }
+
+    private function timeout(): int
+    {
+        $timeout = filter_var($this->option('timeout'), FILTER_VALIDATE_INT);
+
+        if (! is_int($timeout) || $timeout < 30) {
+            throw new RuntimeException('--timeout must be an integer of at least 30 seconds.');
+        }
+
+        return $timeout;
+    }
+
+    private function printSummary(): void
+    {
+        $this->newLine();
+        info(sprintf(
+            'Vicam Kit summary: %d copied/merged, %d skipped, %d failed.',
+            count($this->summary['copied']),
+            count($this->summary['skipped']),
+            count($this->summary['failed']),
+        ));
+
+        foreach ($this->summary as $kind => $paths) {
+            foreach ($paths as $path) {
+                $kind === 'failed' ? warning("  Failed: {$path}") : note('  '.ucfirst($kind).": {$path}");
+            }
+        }
+    }
+
+    private function relative(string $path): string
+    {
+        return str_replace(base_path().DIRECTORY_SEPARATOR, '', $path);
     }
 
     private function stubsPath(): string

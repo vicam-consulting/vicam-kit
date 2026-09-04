@@ -1,4 +1,7 @@
-.DS_Store
-vendor/
-.idea/
-.vscode/
+/vendor/
+/.phpunit.result.cache
+/.phpunit.cache/
+/.clean-room.*/
+/.php-version
+/.env*
+/node_modules/

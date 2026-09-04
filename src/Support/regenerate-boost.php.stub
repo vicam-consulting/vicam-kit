@@ -1,0 +1,103 @@
+<?php
+
+// Run in a fresh application process: Boost may have been installed moments ago.
+declare(strict_types=1);
+
+use Illuminate\Contracts\Console\Kernel;
+use Laravel\Boost\Contracts\SupportsGuidelines;
+use Laravel\Boost\Install\AgentsDetector;
+use Laravel\Boost\Install\GuidelineComposer;
+use Laravel\Boost\Install\GuidelineConfig;
+use Laravel\Boost\Install\GuidelineWriter;
+use Laravel\Boost\Support\RenderFailures;
+
+$root = $argv[1];
+chdir($root);
+require $root.'/vendor/autoload.php';
+$app = require $root.'/bootstrap/app.php';
+$app->make(Kernel::class)->bootstrap();
+// Laravel's console exception renderer does not set this standalone script's exit code.
+set_exception_handler(static function (Throwable $error): never {
+    fwrite(STDERR, 'Boost generation failed: '.$error->getMessage()."\n");
+    exit(1);
+});
+$configPath = $root.'/boost.json';
+if (is_link($configPath)) throw new RuntimeException('boost.json cannot be a symlink.');
+$exists = is_file($configPath);
+$saved = $exists ? json_decode(file_get_contents($configPath), true, flags: JSON_THROW_ON_ERROR) : [];
+if (!is_array($saved)) throw new RuntimeException('boost.json must contain a JSON object.');
+$requested = array_values(array_filter(explode(',', $argv[2] ?? '')));
+$names = $saved['agents'] ?? $requested;
+if (!is_array($names) || $names === []) {
+    throw new RuntimeException('Boost generation needs explicit agents. Configure Boost first, or pass --boost-agents=codex (comma-separated names) on first installation.');
+}
+if ($requested !== [] && $exists && $requested !== $names) {
+    throw new RuntimeException('--boost-agents conflicts with existing boost.json selections. Change those selections through Boost first.');
+}
+$agents = $app->make(AgentsDetector::class)->getAgents()->keyBy(fn ($agent) => $agent->name());
+$selected = [];
+foreach ($names as $name) {
+    $agent = $agents->get($name);
+    if (!$agent instanceof SupportsGuidelines) throw new RuntimeException("Unknown or guideline-incompatible Boost agent: {$name}");
+    $path = $agent->guidelinesPath();
+    if (str_starts_with($path, '/') || in_array('..', explode('/', $path), true)) {
+        throw new RuntimeException("Boost guideline output must remain inside the application: {$path}");
+    }
+    $selected[$path] = $agent;
+    $ancestor = $path;
+    while ($ancestor !== '.' && $ancestor !== '') {
+        if (is_link($ancestor)) throw new RuntimeException("Boost output cannot traverse a symlink: {$ancestor}");
+        $ancestor = dirname($ancestor);
+    }
+    if (str_starts_with($path, '.ai/')) throw new RuntimeException('Boost output cannot overwrite .ai source files.');
+}
+$config = new GuidelineConfig;
+$config->aiGuidelines = $saved['packages'] ?? [];
+$config->usesSail = (bool) ($saved['sail'] ?? false);
+$config->hasSkills = ($saved['skills'] ?? []) !== [];
+$config->hasMcp = (bool) ($saved['mcp'] ?? false);
+$config->enforceTests = (bool) config('boost.enforce_tests', false);
+$app->instance(GuidelineConfig::class, $config);
+$composer = $app->make(GuidelineComposer::class)->config($config);
+$guidelines = $composer->compose();
+if ($guidelines === '' || !$app->make(RenderFailures::class)->isEmpty()) {
+    throw new RuntimeException('Boost could not render all selected guidance; no agent files were updated.');
+}
+$before = [];
+$pattern = '~<laravel-boost-guidelines>.*?</laravel-boost-guidelines>~s';
+try {
+    foreach ($selected as $path => $agent) {
+        $before[$path] = is_file($path) ? file_get_contents($path) : null;
+        (new GuidelineWriter($agent))->write($guidelines);
+        $generated = file_get_contents($path);
+        if (!preg_match($pattern, $generated, $block)) throw new RuntimeException("Boost did not generate guidance at {$path}");
+        foreach ($composer->guidelines() as $key => $guideline) {
+            if ($guideline['custom'] && !str_contains($generated, "=== {$key} rules ===")) {
+                throw new RuntimeException("Missing generated custom guidance {$key} in {$path}");
+            }
+        }
+        // Boost normalizes whitespace globally. Preserve user-owned text byte-for-byte.
+        if ($before[$path] !== null) {
+            $original = $before[$path];
+            if (preg_match_all($pattern, $original) > 1) throw new RuntimeException("Multiple Boost blocks in {$path}; reconcile them before regeneration.");
+            $merged = preg_match($pattern, $original)
+                ? preg_replace_callback($pattern, fn () => $block[0], $original, 1)
+                : $original."\n\n".$block[0]."\n";
+            if (file_put_contents($path, $merged) === false) throw new RuntimeException("Could not save {$path}");
+        }
+        echo "Validated Boost guidance: {$path}\n";
+    }
+    if (!$exists) {
+        $initial = ['agents' => $names, 'guidelines' => true, 'packages' => [], 'skills' => [], 'mcp' => false];
+        if (file_put_contents($configPath, json_encode($initial, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)."\n") === false) {
+            throw new RuntimeException('Could not save initial Boost selections.');
+        }
+    }
+} catch (Throwable $error) {
+    foreach ($before as $path => $contents) {
+        if ($contents === null) { if (is_file($path)) unlink($path); }
+        else file_put_contents($path, $contents);
+    }
+    throw $error;
+}
+// Existing boost.json, agent skills and MCP files are deliberately never rewritten.
