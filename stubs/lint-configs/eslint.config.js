@@ -1,8 +1,19 @@
+import { fileURLToPath } from 'node:url';
+
 import stylistic from '@stylistic/eslint-plugin';
-import { defineConfigWithVueTs, vueTsConfigs } from '@vue/eslint-config-typescript';
+import {
+    configureVueProject,
+    defineConfigWithVueTs,
+    vueTsConfigs,
+} from '@vue/eslint-config-typescript';
 import prettier from 'eslint-config-prettier/flat';
 import importPlugin from 'eslint-plugin-import';
 import vue from 'eslint-plugin-vue';
+
+// Vue discovery must not traverse Composer dependencies or linked packages.
+configureVueProject({
+    rootDir: fileURLToPath(new URL('./resources/js', import.meta.url)),
+});
 
 const controlStatements = [
     'if',
