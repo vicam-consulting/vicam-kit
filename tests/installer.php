@@ -26,9 +26,9 @@ function installer(string $root, ?int $boostExit = 0): array
     $command = new InstallCommand;
     $command->setLaravel($app);
     $console = new ConsoleApplication;
-    $console->add($command);
+    $console->addCommand($command);
     if ($boostExit !== null) {
-        $console->add((new Command('boost:install'))->setCode(fn () => $boostExit));
+        $console->addCommand((new Command('boost:install'))->setCode(fn () => $boostExit));
     }
     $input = new ArrayInput([], $command->getDefinition());
     $input->setInteractive(false);
