@@ -24,6 +24,8 @@ class InstallCommand extends Command
 
     private int $skippedCount = 0;
 
+    private bool $npmLintSetupFailed = false;
+
     public function __construct()
     {
         parent::__construct();
@@ -32,6 +34,7 @@ class InstallCommand extends Command
 
     public function handle(): int
     {
+        $this->npmLintSetupFailed = false;
         $force = $this->option('force');
         $stubsPath = $this->stubsPath();
 
@@ -50,6 +53,12 @@ class InstallCommand extends Command
         $this->newLine();
         info('Running boost:install to generate CLAUDE.md and MCP config...');
         $this->call('boost:install');
+
+        if ($this->npmLintSetupFailed) {
+            warning('Vicam Kit files were installed, but npm lint setup is incomplete. Run the npm install command above before using the lint scripts.');
+
+            return self::FAILURE;
+        }
 
         return self::SUCCESS;
     }
@@ -232,18 +241,19 @@ class InstallCommand extends Command
         }
 
         $packages = [
-            'eslint',
-            '@eslint/js',
-            '@stylistic/eslint-plugin',
-            '@vue/eslint-config-typescript',
-            'eslint-config-prettier',
-            'eslint-import-resolver-typescript',
-            'eslint-plugin-import',
-            'eslint-plugin-vue',
-            'typescript-eslint',
-            'prettier',
-            'prettier-plugin-tailwindcss',
-            'vue-tsc',
+            // Keep ESLint and its JS config on 9 while eslint-plugin-import requires it.
+            'eslint@^9.39.5',
+            '@eslint/js@^9.39.5',
+            '@stylistic/eslint-plugin@^5.10.0',
+            '@vue/eslint-config-typescript@^14.9.0',
+            'eslint-config-prettier@^10.1.8',
+            'eslint-import-resolver-typescript@^4.4.5',
+            'eslint-plugin-import@^2.32.0',
+            'eslint-plugin-vue@^10.11.0',
+            'typescript-eslint@^8.70.0',
+            'prettier@^3.9.8',
+            'prettier-plugin-tailwindcss@^0.8.1',
+            'vue-tsc@^3.3.11',
         ];
 
         info('  Installing npm lint dependencies...');
@@ -256,7 +266,8 @@ class InstallCommand extends Command
         });
 
         if (! $process->isSuccessful()) {
-            warning('  Could not install npm lint dependencies. You may need to run: npm install --save-dev '.implode(' ', $packages));
+            $this->npmLintSetupFailed = true;
+            warning('  npm lint setup is incomplete; the lint scripts are not ready. Run: npm install --save-dev '.implode(' ', $packages));
         }
     }
 
