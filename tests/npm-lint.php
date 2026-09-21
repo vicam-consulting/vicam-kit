@@ -31,7 +31,7 @@ function install(string $directory): array
     $command->setOutput(new OutputStyle(new ArrayInput([]), $output));
     (new ReflectionMethod($command, 'addNpmScriptsAndDeps'))->invoke($command);
 
-    return [$output->fetch(), (new ReflectionProperty($command, 'npmLintSetupFailed'))->getValue($command)];
+    return [$output->fetch(), (new ReflectionProperty($command, 'failedSteps'))->getValue($command) !== []];
 }
 
 $files = new Filesystem;
@@ -60,10 +60,13 @@ try {
     check($packageJson['scripts']['lint'] === 'eslint . --fix', 'Missing lint script');
     check($packageJson['scripts']['lint:types'] === 'vue-tsc --noEmit', 'Missing type script');
     check($packageJson['scripts']['format'] === 'custom-format', 'Existing script overwritten');
+    $files->put($root.'/package.json', '{"scripts":{"format":"custom-format"}}');
+    $beforeFailure = $files->get($root.'/package.json');
     $files->put($root.'/fail', '');
     [$output, $failed] = install($root);
     check($failed, 'Failed npm install must mark setup incomplete');
-    check(str_contains($output, 'npm lint setup is incomplete'), 'Missing incomplete setup warning');
+    check($files->get($root.'/package.json') === $beforeFailure, 'Failed install added unusable scripts');
+    check(str_contains($output, 'Setup is incomplete'), 'Missing incomplete setup warning');
     check(str_contains($output, 'npm install --save-dev '.implode(' ', $packages)), 'Fallback differs from executed command');
     $files->delete($root.'/package.json', $root.'/npm-args.json');
     [$output] = install($root);

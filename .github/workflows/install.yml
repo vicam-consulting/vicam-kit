@@ -1,0 +1,46 @@
+name: Installation checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php: ['8.3', '8.5']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          tools: composer:v2
+          coverage: none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: composer install --no-interaction --prefer-dist
+      - name: Installer regression checks
+        run: |
+          php tests/installer.php
+          php tests/npm-lint.php
+      - uses: actions/checkout@v4
+        with:
+          repository: laravel/vue-starter-kit
+          ref: 4bd3e1dee1987339330d699f766d6d805e7ab45e
+          path: .smoke-starter
+      - name: Fresh Laravel install and rerun
+        working-directory: .smoke-starter
+        run: |
+          cp .env.example .env
+          composer config repositories.vicam path "$GITHUB_WORKSPACE"
+          composer require 'vicam/vicam-kit:@dev' --no-interaction
+          php artisan vicam:install --no-interaction
+          php artisan vicam:install --no-interaction
+          php artisan list
+          php "$GITHUB_WORKSPACE/tests/npm-lint.php" --smoke "$PWD"

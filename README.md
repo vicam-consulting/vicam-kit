@@ -38,5 +38,16 @@ php artisan vicam:install --force
 
 Then let me answer the interactive installer prompts. If I do not want the installer run yet, stop after requiring the Composer package and tell me I can run php artisan vicam:install later.
 
-The installer copies Vicam guidelines, lint tooling, and related dependencies. It also runs Laravel Boost's boost:install command during installation, so if that command is unavailable, install/configure Laravel Boost and then rerun php artisan vicam:install.
+The installer copies Vicam guidelines, lint tooling, and related dependencies. It installs Laravel Boost if needed and runs boost:install during installation.
 ```
+
+Interactive installations let Composer prompt for GitHub authentication in your
+terminal. For unattended installations, configure Composer authentication in that
+environment and use `php artisan vicam:install --no-interaction`.
+
+If a dependency step fails, installation stops with a nonzero exit status before
+adding files that need the missing package. Resolve the reported error and rerun
+`php artisan vicam:install`; existing generated files are preserved unless you
+pass `--force`. Composer/npm scripts are added only after their dependencies install.
+PHP dependencies already declared and installed are reused without another
+Composer update.

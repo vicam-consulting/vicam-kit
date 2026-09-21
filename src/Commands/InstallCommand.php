@@ -2,8 +2,11 @@
 
 namespace Vicam\VicamKit\Commands;
 
+use Composer\InstalledVersions;
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
+use Laravel\Boost\BoostServiceProvider;
+use Symfony\Component\Process\Exception\ExceptionInterface as ProcessException;
 use Symfony\Component\Process\Process;
 
 use function Laravel\Prompts\confirm;
@@ -24,7 +27,8 @@ class InstallCommand extends Command
 
     private int $skippedCount = 0;
 
-    private bool $npmLintSetupFailed = false;
+    /** @var list<string> */
+    private array $failedSteps = [];
 
     public function __construct()
     {
@@ -34,7 +38,9 @@ class InstallCommand extends Command
 
     public function handle(): int
     {
-        $this->npmLintSetupFailed = false;
+        $this->failedSteps = [];
+        $this->copiedCount = 0;
+        $this->skippedCount = 0;
         $force = $this->option('force');
         $stubsPath = $this->stubsPath();
 
@@ -43,22 +49,39 @@ class InstallCommand extends Command
         // Install laravel-data configs if any laravel-data guidelines were selected
         $dataGuidelines = ['laravel-data-core', 'laravel-data-inertia', 'laravel-data-api'];
 
-        if (array_intersect($selected, $dataGuidelines) !== []) {
+        if ($this->failedSteps === [] && array_intersect($selected, $dataGuidelines) !== []) {
             $this->installLaravelDataConfigs($stubsPath, $force);
         }
 
-        $this->newLine();
-        info("Vicam Kit installed: {$this->copiedCount} files copied, {$this->skippedCount} skipped.");
-
-        $this->newLine();
-        info('Running boost:install to generate CLAUDE.md and MCP config...');
-        $this->call('boost:install');
-
-        if ($this->npmLintSetupFailed) {
-            warning('Vicam Kit files were installed, but npm lint setup is incomplete. Run the npm install command above before using the lint scripts.');
+        if ($this->failedSteps !== []) {
+            warning('Vicam Kit setup is incomplete: '.implode(', ', $this->failedSteps).'. Resolve the error above and rerun php artisan vicam:install.');
 
             return self::FAILURE;
         }
+
+        $this->newLine();
+        if (! $this->getApplication()?->has('boost:install')) {
+            if (class_exists(BoostServiceProvider::class)) {
+                warning('Vicam Kit setup is incomplete: Laravel Boost is installed but disabled. Run setup in your local development environment with Boost enabled.');
+
+                return self::FAILURE;
+            }
+
+            if (! $this->installDependencies(['composer', 'require', '--dev', 'laravel/boost'], 'Laravel Boost')) {
+                return self::FAILURE;
+            }
+
+            // Newly installed commands are discovered in a fresh application process.
+            if (! $this->installDependencies([PHP_BINARY, 'artisan', 'boost:install'], 'Laravel Boost setup')) {
+                return self::FAILURE;
+            }
+        } elseif ($this->call('boost:install') !== self::SUCCESS) {
+            warning('Vicam Kit setup is incomplete: boost:install failed. Resolve its error and rerun php artisan vicam:install.');
+
+            return self::FAILURE;
+        }
+
+        info("Vicam Kit installed: {$this->copiedCount} files copied, {$this->skippedCount} skipped.");
 
         return self::SUCCESS;
     }
@@ -118,10 +141,15 @@ class InstallCommand extends Command
         );
 
         if ($installSkill) {
+            $this->installLintTools($stubsPath, $force);
+
+            if ($this->failedSteps !== []) {
+                return $selected;
+            }
+
             $source = $stubsPath.'/skills/lint-fix/SKILL.md';
             $destination = base_path('.ai/skills/lint-fix/SKILL.md');
             $this->copyFile($source, $destination, $force);
-            $this->installLintTools($stubsPath, $force);
         }
 
         return $selected;
@@ -132,9 +160,17 @@ class InstallCommand extends Command
         $this->newLine();
         info('Setting up lint tools for the lint-fix skill...');
 
-        $this->copyLintConfigs($stubsPath, $force);
         $this->addComposerScriptsAndDeps();
+        if ($this->failedSteps !== []) {
+            return;
+        }
+
         $this->addNpmScriptsAndDeps();
+        if ($this->failedSteps !== []) {
+            return;
+        }
+
+        $this->copyLintConfigs($stubsPath, $force);
     }
 
     private function copyLintConfigs(string $stubsPath, bool $force): void
@@ -156,6 +192,13 @@ class InstallCommand extends Command
 
     private function addComposerScriptsAndDeps(): void
     {
+        if (! $this->installDependencies(
+            ['composer', 'require', '--dev', 'laravel/pint', 'larastan/larastan', 'rector/rector'],
+            'PHP lint dependencies',
+        )) {
+            return;
+        }
+
         $composerJsonPath = base_path('composer.json');
         $composerJson = json_decode($this->files->get($composerJsonPath), true);
 
@@ -187,19 +230,6 @@ class InstallCommand extends Command
             }
         }
 
-        $packages = ['laravel/pint', 'larastan/larastan', 'rector/rector'];
-        info('  Installing '.implode(', ', $packages).'...');
-
-        $process = new Process(array_merge(['composer', 'require', '--dev', '--no-interaction'], $packages));
-        $process->setWorkingDirectory(base_path());
-        $process->setTimeout(120);
-        $process->run(function ($type, $buffer) {
-            $this->output->write($buffer);
-        });
-
-        if (! $process->isSuccessful()) {
-            warning('  Could not install PHP lint dependencies. You may need to run: composer require --dev '.implode(' ', $packages));
-        }
     }
 
     private function addNpmScriptsAndDeps(): void
@@ -209,6 +239,26 @@ class InstallCommand extends Command
         if (! $this->files->exists($packageJsonPath)) {
             warning('  package.json not found, skipping npm lint setup.');
 
+            return;
+        }
+
+        $packages = [
+            // Keep ESLint and its JS config on 9 while eslint-plugin-import requires it.
+            'eslint@^9.39.5',
+            '@eslint/js@^9.39.5',
+            '@stylistic/eslint-plugin@^5.10.0',
+            '@vue/eslint-config-typescript@^14.9.0',
+            'eslint-config-prettier@^10.1.8',
+            'eslint-import-resolver-typescript@^4.4.5',
+            'eslint-plugin-import@^2.32.0',
+            'eslint-plugin-vue@^10.11.0',
+            'typescript-eslint@^8.70.0',
+            'prettier@^3.9.8',
+            'prettier-plugin-tailwindcss@^0.8.1',
+            'vue-tsc@^3.3.11',
+        ];
+
+        if (! $this->installDependencies(array_merge(['npm', 'install', '--save-dev'], $packages), 'npm lint dependencies')) {
             return;
         }
 
@@ -240,35 +290,71 @@ class InstallCommand extends Command
             }
         }
 
-        $packages = [
-            // Keep ESLint and its JS config on 9 while eslint-plugin-import requires it.
-            'eslint@^9.39.5',
-            '@eslint/js@^9.39.5',
-            '@stylistic/eslint-plugin@^5.10.0',
-            '@vue/eslint-config-typescript@^14.9.0',
-            'eslint-config-prettier@^10.1.8',
-            'eslint-import-resolver-typescript@^4.4.5',
-            'eslint-plugin-import@^2.32.0',
-            'eslint-plugin-vue@^10.11.0',
-            'typescript-eslint@^8.70.0',
-            'prettier@^3.9.8',
-            'prettier-plugin-tailwindcss@^0.8.1',
-            'vue-tsc@^3.3.11',
-        ];
+    }
 
-        info('  Installing npm lint dependencies...');
+    /** @param list<string> $arguments */
+    private function dependencyProcess(array $arguments): Process
+    {
+        $interactive = isset($this->input) && $this->input->isInteractive() && Process::isTtySupported();
 
-        $process = new Process(array_merge(['npm', 'install', '--save-dev'], $packages));
-        $process->setWorkingDirectory(base_path());
-        $process->setTimeout(120);
-        $process->run(function ($type, $buffer) {
-            $this->output->write($buffer);
-        });
-
-        if (! $process->isSuccessful()) {
-            $this->npmLintSetupFailed = true;
-            warning('  npm lint setup is incomplete; the lint scripts are not ready. Run: npm install --save-dev '.implode(' ', $packages));
+        if ($arguments[0] === 'composer') {
+            $arguments[] = '--prefer-dist';
+            if (! $interactive) {
+                $arguments[] = '--no-interaction';
+            }
+        } elseif (($arguments[1] ?? null) === 'artisan' && ! $interactive) {
+            $arguments[] = '--no-interaction';
         }
+
+        $process = new Process($arguments, base_path());
+        // Composer may need user input or several minutes for downloads and scripts.
+        $process->setTimeout($interactive ? null : 600);
+        if ($interactive) {
+            $process->setTty(true);
+        }
+
+        return $process;
+    }
+
+    /** @param list<string> $arguments */
+    private function installDependencies(array $arguments, string $label): bool
+    {
+        if ($arguments[0] === 'composer' && $arguments[1] === 'require') {
+            $manifest = json_decode($this->files->get(base_path('composer.json')), true);
+            $packages = array_filter(array_slice($arguments, 2), fn (string $argument) => ! str_starts_with($argument, '-'));
+            $missing = array_filter($packages, fn (string $package) => (! isset($manifest['require'][$package]) && ! isset($manifest['require-dev'][$package]))
+                || ! InstalledVersions::isInstalled($package)
+            );
+
+            if ($missing === []) {
+                note('  '.$label.' already installed.');
+
+                return true;
+            }
+        }
+
+        info('  Installing '.$label.'...');
+        $process = $this->dependencyProcess($arguments);
+
+        try {
+            $process->run(function ($type, $buffer) {
+                $this->output->write($buffer);
+            });
+
+            if ($process->isSuccessful()) {
+                return true;
+            }
+        } catch (ProcessException $exception) {
+            warning('  '.$exception->getMessage());
+        }
+
+        $this->failedSteps[] = $label;
+        warning('  Could not install '.$label.'. Setup is incomplete. Run: '.implode(' ', $arguments));
+        if ($arguments[0] === 'composer') {
+            warning('  If Composer reports a GitHub authentication error, run the command above in your project terminal so Composer can request credentials. CI must provide Composer authentication in its environment.');
+        }
+
+        return false;
     }
 
     private function installLaravelDataConfigs(string $stubsPath, bool $force): void
@@ -285,37 +371,12 @@ class InstallCommand extends Command
         $this->newLine();
         info('Setting up laravel-data configuration...');
 
-        // Install composer dependencies first (before copying configs that reference their classes)
-        $devPackages = ['spatie/laravel-typescript-transformer'];
-        $prodPackages = ['spatie/laravel-data'];
-
-        info('  Installing spatie/laravel-data...');
-
-        $process = new Process(array_merge(['composer', 'require', '--no-interaction', '-W'], $prodPackages));
-        $process->setWorkingDirectory(base_path());
-        $process->setTimeout(120);
-        $process->run(function ($type, $buffer) {
-            $this->output->write($buffer);
-        });
-
-        if (! $process->isSuccessful()) {
-            warning('  Could not install spatie/laravel-data. You may need to run: composer require '.implode(' ', $prodPackages));
-            warning('  Skipping config file copy since package installation failed.');
-
+        if (! $this->installDependencies(['composer', 'require', '-W', 'spatie/laravel-data'], 'laravel-data')) {
             return;
         }
 
-        info('  Installing spatie/laravel-typescript-transformer...');
-
-        $process = new Process(array_merge(['composer', 'require', '--dev', '--no-interaction', '-W'], $devPackages));
-        $process->setWorkingDirectory(base_path());
-        $process->setTimeout(120);
-        $process->run(function ($type, $buffer) {
-            $this->output->write($buffer);
-        });
-
-        if (! $process->isSuccessful()) {
-            warning('  Could not install spatie/laravel-typescript-transformer. You may need to run: composer require --dev '.implode(' ', $devPackages));
+        if (! $this->installDependencies(['composer', 'require', '--dev', '-W', 'spatie/laravel-typescript-transformer'], 'TypeScript transformer')) {
+            return;
         }
 
         // Copy config files after packages are installed (configs reference package classes)
