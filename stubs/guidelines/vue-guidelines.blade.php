@@ -40,9 +40,11 @@ Use Inertia's `<Head>`.
 
 - **`useHttp`** — form-style XHR that does **not** navigate (dialog fetches, receipt submissions). Returns `{ processing, wasSuccessful, errors, get/post/put }` without mutating page props. See Inertia v3 docs.
 - **`router.optimistic(fn).put(...)`** — apply expected page-prop shape immediately; Inertia reconciles on success and auto-rolls-back on error. Use for inline edits where the optimistic shape is obvious.
-- **Instant visits** — pass `<Link :href :component="pageName">` so the component mounts optimistically on click while the round-trip reconciles. Use on nav items and card lists that share the current layout.
-- **`<WhenVisible data="key" fallback="...">`** — lazy-load below-the-fold content; pair with deferred props on the backend.
+- **Instant visits** — `<Link :href :component="pageName">` mounts the target before the response, with only shared props. Use only where that page renders sensibly without its own props.
+- **Deferred props** — render a same-size `Skeleton` while the prop is `undefined` (`<Deferred data="key">` with a `#fallback` slot, or a `v-if` on `undefined`).
+- **`<WhenVisible data="key">`** (with a `#fallback` slot) — loads an `Inertia::optional()` prop when scrolled into view.
 - **`router.reload({ only: ['categories'] })`** — force the server to re-resolve specific props (including `once` props).
+- **`usePoll(ms, { only: [...], preserveErrors: true }, { mode: 'rest' })`** — always name the props. The third argument takes poll options: `mode` (`'rest'` waits for each response before the next interval) needs `@inertiajs/vue3` 3.2+, `background: 'pause'` 3.9+; check `package.json`.
 
 ## Layouts
 

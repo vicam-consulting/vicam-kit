@@ -7,7 +7,7 @@ Deployed with **Inertia v3 SSR enabled**. All frontend code must be SSR-compatib
 - Production build: `npm run build` (runs `vite build && vite build --ssr`).
 - SSR entry: `resources/js/ssr.ts` using `createSSRApp` + `renderToString`, clustering enabled (`{ cluster: true }`).
 - Client entrypoints (`app.ts`, etc.) MUST use `createSSRApp(...).mount(el)` — never `createApp` — so server HTML is **hydrated**, not re-rendered.
-- Root Blade uses v3 components: `<x-inertia::head />` and `<x-inertia::app />` (replaces `@inertiaHead` / `@inertia`).
+- Root Blade uses v3 components: @verbatim`<x-inertia::head />` and `<x-inertia::app />` (replaces `@inertiaHead` / `@inertia`).@endverbatim
 - Production process managed via `php artisan inertia:start-ssr` / `inertia:stop-ssr`. Development: `@inertiajs/vite` handles SSR automatically via `npm run dev` — no separate process.
 
 ## Browser APIs Are Unavailable During SSR
