@@ -28,7 +28,7 @@
 - `Lazy::inertia()` / `#[AutoInertiaLazy]` need laravel-data **4.22.1+** on Inertia v3 (resolves to `Inertia\OptionalProp`); older versions build `Inertia\LazyProp`, which v3 removed (fatal "class not found"). In the controller's props array prefer `Inertia::optional()`.
 - **NEVER use `Lazy::create()`, `->include()` or `->exclude()` in Inertia DTOs:** those are laravel-data's own partials for API resources. A `Lazy::create()` prop is simply never sent; Inertia's `only` / `except` headers do the filtering.
 - Auto-lazy attributes only apply when laravel-data builds the object (`::from()` without a custom `fromModel()`). A `fromModel()` that calls `new self(...)` ignores them; pass `Lazy::closure()` / `Lazy::whenLoaded()` explicitly there.
-- Lazies only filter at the top level of the props. A DTO nested inside another prop is resolved whole, including its lazies, so `only: ['item.notes']` still builds all of `item`.
+- Lazies only filter at the top level of the props. A DTO nested inside another prop resolves with its parent, so `only: ['item.notes']` still builds all of `item`.
 - `#[AutoWhenLoadedLazy]` / `Lazy::whenLoaded()` for relationships that should only serialize when eager-loaded.
 
 <code-snippet name="Response DTO with lazy collection" lang="php">
