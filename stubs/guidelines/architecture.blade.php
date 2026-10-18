@@ -29,7 +29,7 @@ Use the right building block for the right kind of work:
 
 ### Inertia Responses
 - All data returned to Inertia must be wrapped in **Response DTOs** from `app/Data/Responses`.
-- Controllers must not pass raw arrays/models/loose objects/etc. to Inertia. Only use Response DTOs.
+- Controllers must not pass models or ad-hoc arrays to Inertia: props are Response DTOs, DTO collections, prop types wrapping them, or plain scalars (see Inertia DTOs).
 - Construct Response DTOs via `fromModel()` (or `from()`), supporting nesting and collections as needed or via casts/custom casts for properties.
 
 ## Request DTOs
@@ -43,3 +43,9 @@ Use the right building block for the right kind of work:
 - **Response DTOs** are returned from Actions and passed to Inertia.  
 - **Response DTOs** must be used when sending data to Inertia.
 - **Request DTOs** own validation through laravel-data (auto-inferring, attributes, manual rules as needed); DTOs contain no business logic or I/O.
+
+## Remembering lookups (`once()`)
+- Use Laravel's `once()` inside an instance method to remember a lookup for that object's lifetime (e.g. a model's `memberRole($userId)`). The key is the object, the calling line and the closure's `use` values: pass scalar ids, not models.
+- Never call `once()` from a static method, a plain function or a long-lived singleton. The value then lives for the whole process, and queue workers keep it across jobs: Laravel only flushes `once()` between tests (and Octane requests).
+- Invalidate with `Once::flush()` from the write path (e.g. the model's saved/deleted events).
+- Don't memoize what a write path reads (quotas, plans, anything checked under a lock); read it fresh. To avoid repeat queries, share loaded models instead (e.g. set an already-loaded user as a relation rather than querying it again).
